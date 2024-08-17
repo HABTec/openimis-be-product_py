@@ -39,7 +39,7 @@ class MutationTestProduct(openIMISGraphQLTestCase):
         cls.user = User.objects.filter(username='admin', i_user__isnull=False).first()
         super(MutationTestProduct, cls).setUpClass()
         if not cls.user:
-            cls.user=create_test_interactive_user(username='admin', password='S\/pe®Pąßw0rd™', roles=[1])
+            cls.user=create_test_interactive_user(username='admin', password='S\/pe®Pąßw0rd™')
         # some test data so as to created contract properly
         cls.user_token = get_token(cls.user, cls.BaseTestContext(user=cls.user))
         cls.product = Product.objects.filter(code='BCTA0001').first()
