@@ -1,8 +1,11 @@
 from product.models import Product, ProductService, ProductItem
 
 
-def create_test_product(code=None, valid=True, custom_props={}):
-    custom_props = {k: v for k, v in custom_props.items() if hasattr(Product, k)} 
+def create_test_product(code=None, valid=True, custom_props=None):
+    if custom_props is None:
+        custom_props = {}
+    else:
+        custom_props = {k: v for k, v in custom_props.items() if hasattr(Product, k)} 
     if 'code' in custom_props:
         code = custom_props.pop('code')
     elif not code:
@@ -32,13 +35,14 @@ def create_test_product(code=None, valid=True, custom_props={}):
     elif custom_props:
         Product.objects.filter(id=product.id).update(**custom_props)
         product.refresh_from_db()
-    # reseting custom props to avoid having it in next calls
-    custom_props = {}
     return product
 
 
-def create_test_product_service(product, service, valid=True, custom_props={}):
-    custom_props = {k: v for k, v in custom_props.items() if hasattr(ProductService, k)} 
+def create_test_product_service(product, service, valid=True, custom_props=None):
+    if custom_props is None:
+        custom_props = {}
+    else:
+        custom_props = {k: v for k, v in custom_props.items() if hasattr(ProductService, k)} 
     obj = ProductService.objects.filter(
         product=product,
         service=service,
@@ -69,13 +73,14 @@ def create_test_product_service(product, service, valid=True, custom_props={}):
                 **custom_props
             }
         )
-    # reseting custom props to avoid having it in next calls
-    custom_props = {}
     return obj
 
 
-def create_test_product_item(product, item, valid=True, custom_props={}):
-    custom_props = {k: v for k, v in custom_props.items() if hasattr(ProductItem, k)} 
+def create_test_product_item(product, item, valid=True, custom_props=None):
+    if custom_props is None:
+        custom_props = {}
+    else:
+        custom_props = {k: v for k, v in custom_props.items() if hasattr(ProductItem, k)} 
     obj = ProductItem.objects.filter(
         product=product,
         item=item,
@@ -106,6 +111,4 @@ def create_test_product_item(product, item, valid=True, custom_props={}):
                 **custom_props
             }
         )
-    # reseting custom props to avoid having it in next calls
-    custom_props = {}
     return obj
