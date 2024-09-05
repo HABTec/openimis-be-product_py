@@ -2,12 +2,12 @@
 import logging
 
 from django.db import migrations, models
-from product.models import Product
 
 logger = logging.getLogger(__name__)
 
 
-def insert_treatment_ceiling_type():
+def insert_treatment_ceiling_type(apps):
+    Product = apps.get_model('product', 'Product')
     products = Product.objects.all().filter(
         validity_to__isnull=True,
         ceiling_type__isnull=True,
@@ -21,7 +21,8 @@ def insert_treatment_ceiling_type():
     insert_values(products, "ceiling_type", "T")
 
 
-def insert_policy_ceiling_type():
+def insert_policy_ceiling_type(apps):
+    Product = apps.get_model('product', 'Product')
     products = Product.objects.all().filter(
         validity_to__isnull=True,
         ceiling_type__isnull=True,
@@ -35,7 +36,8 @@ def insert_policy_ceiling_type():
     insert_values(products, "ceiling_type", "P")
 
 
-def insert_insuree_ceiling_type():
+def insert_insuree_ceiling_type(apps):
+    Product = apps.get_model('product', 'Product')
     products = Product.objects.all().filter(
         validity_to__isnull=True,
         ceiling_type__isnull=True
@@ -54,9 +56,9 @@ def insert_ceiling_types(apps, schema_editor):
     Insert ceiling types based on ded/max values.
     Default value is set to "Insuree"
     """
-    insert_treatment_ceiling_type()
-    insert_policy_ceiling_type()
-    insert_insuree_ceiling_type()
+    insert_treatment_ceiling_type(apps)
+    insert_policy_ceiling_type(apps)
+    insert_insuree_ceiling_type(apps)
 
 
 class Migration(migrations.Migration):
