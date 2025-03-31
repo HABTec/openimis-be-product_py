@@ -27,9 +27,6 @@ class MutationTestProduct(openIMISGraphQLTestCase):
     admin_user = None
 
 
-    class BaseTestContext:
-        def __init__(self, user):
-            self.user = user
 
     class AnonymousUserContext:
         user = mock.Mock(is_anonymous=True)
