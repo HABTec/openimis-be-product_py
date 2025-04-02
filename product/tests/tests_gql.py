@@ -6,7 +6,7 @@ import graphene
 import datetime
 from product.models import Product
 from core.models import TechnicalUser
-from core.models.openimis_graphql_test_case import openIMISGraphQLTestCase
+from core.models.openimis_graphql_test_case import openIMISGraphQLTestCase, BaseTestContext
 from core.test_helpers import create_test_interactive_user
 from policyholder.tests.helpers import *
 from contribution_plan.tests.helpers import create_test_contribution_plan, \
@@ -36,7 +36,7 @@ class MutationTestProduct(openIMISGraphQLTestCase):
         cls.user = create_test_interactive_user(username='admin', password='S\/pe®Pąßw0rd™')
         super(MutationTestProduct, cls).setUpClass()
         # some test data so as to created contract properly
-        cls.user_token = get_token(cls.user, cls.BaseTestContext(user=cls.user))
+        cls.user_token = BaseTestContext(user=cls.user).get_jwt()
         cls.product = Product.objects.filter(code='BCTA0001').first()
     def test_mutation_update_product(self):
         time_stamp = datetime.datetime.now()
