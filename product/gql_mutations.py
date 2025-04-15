@@ -33,20 +33,26 @@ class DeductibleOrCeilingValue:
     all: Decimal
     ip: Decimal
     op: Decimal
+    
+    def __init__(self, all, ip, op):
+        self.all = all
+        self.ip = ip
+        self.op = op
 
 
 def extract_deductibles(data):
     return DeductibleOrCeilingValue(
-        data.pop("deductible", 0),
-        data.pop("deductible_ip", 0),
-        data.pop("deductible_op", 0),
+        all = data.pop("deductible", 0),
+        ip = data.pop("deductible_ip", 0),
+        op = data.pop("deductible_op", 0),
     )
 
 
 def extract_ceilings(data):
     return DeductibleOrCeilingValue(
-        data.pop("ceiling", 0), data.pop(
-            "ceiling_ip", 0), data.pop("ceiling_op", 0)
+        all = data.pop("ceiling", 0), 
+        ip = data.pop("ceiling_ip", 0),
+        op = data.pop("ceiling_op", 0)
     )
 
 
