@@ -112,5 +112,4 @@ class MutationTestProduct(openIMISGraphQLTestCase):
           }}
         }}"""
         content=self.send_mutation_raw(mutation_raw,  self.user_token, variables_param)
-        print(content)
         
