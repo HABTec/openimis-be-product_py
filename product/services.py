@@ -99,12 +99,12 @@ def set_product_deductible_and_ceiling(
         setattr(
             product,
             f"max_op_{field_names[type]}",
-            ceilings.ip if type == ceiling_type else 0,
+            ceilings.op if type == ceiling_type else 0,
         )
         setattr(
             product,
             f"max_ip_{field_names[type]}",
-            ceilings.op if type == ceiling_type else 0,
+            ceilings.ip if type == ceiling_type else 0,
         )
 
 
