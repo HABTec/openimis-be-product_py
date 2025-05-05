@@ -2,7 +2,7 @@ import calendar
 from _decimal import Decimal
 from datetime import timedelta
 
-from django.db.models import Q, F, ExpressionWrapper, DateField, Sum
+from django.db.models import Q, F, ExpressionWrapper, DateField, Sum, Value
 from django.db.models.functions import Greatest
 
 from claim.models import Claim, ClaimDetail
@@ -11,6 +11,7 @@ from core.calendars import ad_calendar
 from core.datetimes.ad_datetime import date, AdDate
 from policy.models import Policy
 from product.models import Product
+import datetime as py_datetime
 
 template = """
 {
@@ -3608,7 +3609,7 @@ def fetch_premium_data(search_filters: Q, start_month: AdDate, end_month: AdDate
                                    output_field=DateField()))
                                .annotate(greatest_date_pay_start=ExpressionWrapper(
                                    Greatest(F("pay_date"),
-                                            start_month),
+                                            Value(py_datetime.date(start_month.year, start_month.month, start_month.day))),
                                    output_field=DateField()))
                                .annotate(total_amount=Sum("amount"))
                                .order_by())
@@ -3618,17 +3619,21 @@ def fetch_premium_data(search_filters: Q, start_month: AdDate, end_month: AdDate
         greatest_date_pay_effective = premium["greatest_date_pay_effective"]
         amount = premium["total_amount"]
         if start_month < expiry_date <= end_month:
-            multiplicator = date_difference_or_1(premium["greatest_date_pay_start"], expiry_date)
-            denominator = date_difference_or_1(greatest_date_pay_effective, expiry_date)
+            multiplicator = date_difference_or_1(
+                premium["greatest_date_pay_start"], expiry_date)
+            denominator = date_difference_or_1(
+                greatest_date_pay_effective, expiry_date)
             total += multiplicator * (amount/denominator)
         elif start_month <= greatest_date_pay_effective <= end_month:
             multiplicator = end_month.day + 1 - greatest_date_pay_effective.day
-            denominator = date_difference_or_1(greatest_date_pay_effective, expiry_date)
+            denominator = date_difference_or_1(
+                greatest_date_pay_effective, expiry_date)
             total += multiplicator * (amount/denominator)
         elif expiry_date > end_month and premium["effective_date"] < start_month and premium["pay_date"] < start_month:
             multiplicator = end_month.day
             expiry_date_minus_1_day = expiry_date - timedelta(days=1)
-            denominator = date_difference_or_1(greatest_date_pay_effective, expiry_date_minus_1_day)
+            denominator = date_difference_or_1(
+                greatest_date_pay_effective, expiry_date_minus_1_day)
             total += multiplicator * (amount/denominator)
 
     return {
@@ -3642,8 +3647,8 @@ def fetch_claim_data(search_filters: Q, start_month: AdDate, end_month: AdDate):
     promptness_date_differences = []
 
     search_filters &= (
-            Q(date_from__range=[start_month, end_month])
-            | Q(batch_run__run_date__range=[start_month, end_month])
+        Q(date_from__range=[start_month, end_month])
+        | Q(batch_run__run_date__range=[start_month, end_month])
     )
 
     claims = Claim.objects.filter(search_filters)
@@ -3694,7 +3699,8 @@ def fetch_policy_data(search_filters: Q, start_month: AdDate, end_month: AdDate)
 
         if policy.effective_date <= end_month < policy.expiry_date:
             total_policies += 1
-            total_insurees += policy.insuree_policies.filter(validity_to__isnull=True).all().count()
+            total_insurees += policy.insuree_policies.filter(
+                validity_to__isnull=True).all().count()
 
     return {
         DATA_TOTAL_POLICIES: total_policies,
@@ -3769,25 +3775,26 @@ def product_derived_operational_indicators_query(user,
     default_premium_filters = (Q(validity_to__isnull=True)
                                & Q(pay_date__lte=F("policy__expiry_date"))
                                & Q(policy__validity_to__isnull=True)
-                               & Q(policy__status__gt=1)  # All the non-idle policies
+                               # All the non-idle policies
+                               & Q(policy__status__gt=1)
                                & Q(policy__product_id=product.id))
 
     default_claim_filters = (Q(validity_to__isnull=True)
                              & (
                                  Q(items__isnull=True)
                                  | Q(items__validity_to__isnull=True)
-                             )
-                             & (
-                                Q(services__isnull=True)
-                                | Q(services__validity_to__isnull=True)
-                             )
-                             & (
-                                Q(services__product_id=product_id)
-                                | Q(items__product_id=product_id)
-                             )
-                             & Q(insuree__validity_to__isnull=True)
-                             & Q(insuree__family__validity_to__isnull=True)
-                             & Q(health_facility__validity_to__isnull=True))
+    )
+        & (
+        Q(services__isnull=True)
+        | Q(services__validity_to__isnull=True)
+    )
+        & (
+        Q(services__product_id=product_id)
+        | Q(items__product_id=product_id)
+    )
+        & Q(insuree__validity_to__isnull=True)
+        & Q(insuree__family__validity_to__isnull=True)
+        & Q(health_facility__validity_to__isnull=True))
 
     default_policy_filters = (Q(validity_to__isnull=True)
                               & ~Q(status=Policy.STATUS_IDLE)
@@ -3799,17 +3806,26 @@ def product_derived_operational_indicators_query(user,
     working_months = list(range(1, 13)) if month == ALL_MONTHS else [month]
     for current_month in working_months:
 
-        start_date, end_date = calculate_start_end_month_dates(year, current_month)
-        premium_data = fetch_premium_data(default_premium_filters, start_date, end_date)
-        claim_data = fetch_claim_data(default_claim_filters, start_date, end_date)
-        policy_data = fetch_policy_data(default_policy_filters, start_date, end_date)
+        start_date, end_date = calculate_start_end_month_dates(
+            year, current_month)
+        premium_data = fetch_premium_data(
+            default_premium_filters, start_date, end_date)
+        claim_data = fetch_claim_data(
+            default_claim_filters, start_date, end_date)
+        policy_data = fetch_policy_data(
+            default_policy_filters, start_date, end_date)
 
         promptness = calculate_ratio(sum(claim_data[DATA_PROMPTNESS_DATE_DIFFERENCES]),
-                                     Decimal(len(claim_data[DATA_PROMPTNESS_DATE_DIFFERENCES])))  # = simply AVG()
-        incurred_claim_ratio = calculate_ratio(claim_data[DATA_REMUNERATED], premium_data[DATA_ALLOCATED])
-        renewal_ratio = calculate_ratio(policy_data[DATA_RENEWED_POLICIES], policy_data[DATA_EXPIRED_POLICIES])
-        growth_ratio = calculate_ratio(policy_data[DATA_NEW_POLICIES], policy_data[DATA_TOTAL_POLICIES])
-        insuree_per_claim_ratio = calculate_ratio(claim_data[DATA_TOTAL_CLAIMS], policy_data[DATA_INSUREE_POLICIES])
+                                     # = simply AVG()
+                                     Decimal(len(claim_data[DATA_PROMPTNESS_DATE_DIFFERENCES])))
+        incurred_claim_ratio = calculate_ratio(
+            claim_data[DATA_REMUNERATED], premium_data[DATA_ALLOCATED])
+        renewal_ratio = calculate_ratio(
+            policy_data[DATA_RENEWED_POLICIES], policy_data[DATA_EXPIRED_POLICIES])
+        growth_ratio = calculate_ratio(
+            policy_data[DATA_NEW_POLICIES], policy_data[DATA_TOTAL_POLICIES])
+        insuree_per_claim_ratio = calculate_ratio(
+            claim_data[DATA_TOTAL_CLAIMS], policy_data[DATA_INSUREE_POLICIES])
 
         new_data_element = {
             "product_code": product.code,
