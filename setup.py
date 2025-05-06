@@ -9,7 +9,7 @@ os.chdir(os.path.normpath(os.path.join(os.path.abspath(__file__), os.pardir)))
 
 setup(
     name='openimis-be-product',
-    version='1.8.0',
+    version='1.8.1',
     packages=find_packages(),
     include_package_data=True,
     license='GNU AGPL v3',
@@ -23,6 +23,7 @@ setup(
         'django-db-signals',
         'django-clone',
         'djangorestframework',
+        'openimis-be-location'
     ],   
     classifiers=[
         'Environment :: Web Environment',
