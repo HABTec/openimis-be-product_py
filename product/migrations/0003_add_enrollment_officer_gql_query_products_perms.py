@@ -18,6 +18,7 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ("product", "0002_productmutation"),
+        ("core", "0015_missing_roles")
     ]
 
     operations = [
