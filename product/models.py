@@ -3,6 +3,10 @@ from django.db.models.deletion import CASCADE
 from django.utils.translation import gettext_lazy
 from django.db import models
 from core.models import VersionedModel, ObjectMutation, UUIDModel, MutationLog
+from django.core.exceptions import ValidationError
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from enum import Enum
 
 
 class Product(VersionedModel):
@@ -19,29 +23,17 @@ class Product(VersionedModel):
         blank=True,
         null=True,
     )
-    date_from = models.DateTimeField(db_column="DateFrom")
-    date_to = models.DateTimeField(db_column="DateTo")
     conversion_product = models.ForeignKey(
         "self", models.DO_NOTHING, db_column="ConversionProdID", blank=True, null=True
     )
-
-    insurance_period = models.SmallIntegerField(db_column="InsurancePeriod")
     administration_period = models.IntegerField(
         db_column="AdministrationPeriod", blank=True, null=True
     )
-
     lump_sum = models.DecimalField(db_column="LumpSum", max_digits=18, decimal_places=2)
-    max_members = models.SmallIntegerField(db_column="MemberCount")
-    max_installments = models.IntegerField(
-        db_column="MaxInstallments", blank=True, null=True
-    )
     threshold = models.IntegerField(db_column="Threshold", blank=True, null=True)
     recurrence = models.IntegerField(db_column="Recurrence", blank=True, null=True)
     premium_adult = models.DecimalField(
         db_column="PremiumAdult", max_digits=18, decimal_places=2, blank=True, null=True
-    )
-    premium_child = models.DecimalField(
-        db_column="PremiumChild", max_digits=18, decimal_places=2, blank=True, null=True
     )
     ded_insuree = models.DecimalField(
         db_column="DedInsuree", max_digits=18, decimal_places=2, blank=True, null=True
@@ -129,15 +121,6 @@ class Product(VersionedModel):
         db_column="MaxIPPolicy", max_digits=18, decimal_places=2, blank=True, null=True
     )
     audit_user_id = models.IntegerField(db_column="AuditUserID")
-
-    grace_period_enrolment = models.IntegerField(db_column="GracePeriod")
-    grace_period_payment = models.IntegerField(
-        db_column="WaitingPeriod", blank=True, null=True
-    )
-    grace_period_renewal = models.IntegerField(
-        db_column="GracePeriodRenewal", blank=True, null=True
-    )
-
     registration_lump_sum = models.DecimalField(
         db_column="RegistrationLumpSum",
         max_digits=18,
@@ -152,21 +135,6 @@ class Product(VersionedModel):
         blank=True,
         null=True,
     )
-    general_assembly_lump_sum = models.DecimalField(
-        db_column="GeneralAssemblyLumpSum",
-        max_digits=18,
-        decimal_places=2,
-        blank=True,
-        null=True,
-    )
-    general_assembly_fee = models.DecimalField(
-        db_column="GeneralAssemblyFee",
-        max_digits=18,
-        decimal_places=2,
-        blank=True,
-        null=True,
-    )
-
     start_cycle_1 = models.CharField(
         db_column="StartCycle1", max_length=5, blank=True, null=True
     )
@@ -220,20 +188,6 @@ class Product(VersionedModel):
         blank=True,
         null=True,
     )
-
-    renewal_discount_perc = models.IntegerField(
-        db_column="RenewalDiscountPerc", blank=True, null=True
-    )
-    renewal_discount_period = models.IntegerField(
-        db_column="RenewalDiscountPeriod", blank=True, null=True
-    )
-    enrolment_discount_perc = models.IntegerField(
-        db_column="EnrolmentDiscountPerc", blank=True, null=True
-    )
-    enrolment_discount_period = models.IntegerField(
-        db_column="EnrolmentDiscountPeriod", blank=True, null=True
-    )
-
     share_contribution = models.DecimalField(
         db_column="ShareContribution",
         max_digits=5,
@@ -290,7 +244,6 @@ class Product(VersionedModel):
         blank=True,
         null=True,
     )
-
     ceiling_type = models.CharField(
         max_length=1,
         db_column="CeilingType",
@@ -302,7 +255,6 @@ class Product(VersionedModel):
             ("P", gettext_lazy("POLICY")),
         ),
     )
-
     max_no_antenatal = models.IntegerField(
         db_column="MaxNoAntenatal", blank=True, null=True
     )
@@ -402,11 +354,15 @@ class Product(VersionedModel):
         blank=True,
         null=True,
     )
-    age_minimal = models.IntegerField(
-        db_column="Min Age", blank=True, null=True
-    )
     age_maximal = models.IntegerField(
         db_column="Max Age", blank=True, null=True
+    )
+    enrolment_period_start_date = models.DateField(blank=True, null=True)
+    enrolment_period_end_date = models.DateField(blank=True, null=True)
+    membership_types = models.ManyToManyField(
+        'MembershipType',
+        blank=True,
+        related_name='products',
     )
 
     def has_cycle(self):
@@ -416,22 +372,6 @@ class Product(VersionedModel):
             or bool(self.start_cycle_3)
             or bool(self.start_cycle_4)
         )
-
-    def has_enrolment_discount(self):
-        return self.enrolment_discount_perc and self.enrolment_discount_period
-
-    def has_renewal_discount(self):
-        return self.renewal_discount_perc and self.renewal_discount_period
-
-    @property
-    def member_count(self):
-        from warnings import warn
-        warn(
-            "'member_count' has been deprecated in favor of 'max_members'",
-            DeprecationWarning,
-            stacklevel=2
-        )
-        return self.max_members
 
     class Meta:
         managed = True
@@ -662,3 +602,44 @@ class ProductMutation(UUIDModel, ObjectMutation):
     class Meta:
         managed = True
         db_table = "product_ProductMutation"
+
+
+class MembershipType(models.Model):
+    LEVEL_TYPE_CHOICES = [
+        ("urban", "Urban"),
+        ("rural", "Rural"),
+    ]
+    region = models.CharField(max_length=100)
+    district = models.CharField(max_length=100, null=True, blank=True)
+    level_type = models.CharField(max_length=10, choices=LEVEL_TYPE_CHOICES)
+    level_index = models.PositiveIntegerField()  # 1-based index
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+
+    def clean(self):
+        if not self.region:
+            raise ValidationError("region is required")
+        if self.level_type not in dict(self.LEVEL_TYPE_CHOICES):
+            raise ValidationError("level_type must be 'urban' or 'rural'")
+        if self.level_index < 1:
+            raise ValidationError("level_index must be >= 1")
+        if self.price < 0:
+            raise ValidationError("price must be >= 0")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
+    @classmethod
+    def bulk_create_from_levels(cls, region, district, levels_dict):
+        objs = []
+        for level_type in ["urban", "rural"]:
+            prices = levels_dict.get(level_type, [])
+            for idx, price in enumerate(prices, 1):
+                objs.append(cls(
+                    region=region,
+                    district=district,
+                    level_type=level_type,
+                    level_index=idx,
+                    price=price
+                ))
+        return cls.objects.bulk_create(objs)

@@ -17,7 +17,7 @@ from .services import (
     check_unique_code_product
 )
 from .apps import ProductConfig
-from .models import Product, ProductItem, ProductService, ProductMutation, LIMIT_CHOICES
+from .models import Product, ProductItem, ProductService, ProductMutation, LIMIT_CHOICES, MembershipType
 from .enums import (
     CareTypeEnum,
     CeilingExclusionEnum,
@@ -68,6 +68,22 @@ def create_or_update_product(user, data, is_duplicate=False):
     ceiling_type = data.get("ceiling_type", None)
     deductibles = extract_deductibles(data)
     ceilings = extract_ceilings(data)
+    membership_types_input = data.pop("membership_types", None)
+    created_membership_types = []
+    if membership_types_input:
+        region = membership_types_input["region"]
+        district = membership_types_input.get("district")
+        levels = membership_types_input["levels"]
+        for level_type in ["urban", "rural"]:
+            for idx, price in enumerate(levels.get(level_type, []), 1):
+                mt = MembershipType.objects.create(
+                    region=region,
+                    district=district,
+                    level_type=level_type,
+                    level_index=idx,
+                    price=price
+                )
+                created_membership_types.append(mt)
     hist_id=None
     incoming_code = data.get('code')
     current_product = Product.objects.filter(uuid=product_uuid).first()
@@ -157,6 +173,9 @@ def create_or_update_product(user, data, is_duplicate=False):
             user, client_mutation_id=client_mutation_id, product=product
         )
 
+    if created_membership_types:
+        product.membership_types.set(created_membership_types)
+
     if is_duplicate:
         return product
 
@@ -221,62 +240,36 @@ class ProductItemInput(ProductServiceOrItemInput):
 
 class ProductInputType(OpenIMISMutation.Input):
     name = graphene.String(required=True)
-    date_from = graphene.Date(required=True)
-    date_to = graphene.Date(required=True)
-    insurance_period = graphene.Int(required=True)
+    enrolment_period_start_date = graphene.Date(required=False)
+    enrolment_period_end_date = graphene.Date(required=False)
     administration_period = graphene.Int()
-    max_members = graphene.Int(default_value=0)
-    max_installments = graphene.Int()
     recurrence = graphene.Int()
     location_uuid = graphene.UUID()
     conversion_product_uuid = graphene.UUID()
     acc_code_remuneration = graphene.String()
     acc_code_premiums = graphene.String()
-
     lump_sum = graphene.Decimal(
         max_digits=18, decimal_places=2, required=False, default_value=0
     )
     premium_adult = graphene.Decimal(
         max_digits=18, decimal_places=2, required=False, default_value=0
     )
-    premium_child = graphene.Decimal(
-        max_digits=18, decimal_places=2, required=False, default_value=0
-    )
     threshold = graphene.Int()
     share_contribution = graphene.Decimal(
         max_digits=18, decimal_places=2, required=False
     )
-
-    grace_period_renewal = graphene.Int(default_value=0)
-    grace_period_payment = graphene.Int(default_value=0)
-    grace_period_enrolment = graphene.Int(default_value=0)
-
     registration_lump_sum = graphene.Decimal(
         max_digits=18, decimal_places=2, required=False
     )
     registration_fee = graphene.Decimal(
         max_digits=18, decimal_places=2, required=False)
-    general_assembly_lump_sum = graphene.Decimal(
-        max_digits=18, decimal_places=2, required=False
-    )
-    general_assembly_fee = graphene.Decimal(
-        max_digits=18, decimal_places=2, required=False
-    )
-
     start_cycle_1 = graphene.String()
     start_cycle_2 = graphene.String()
     start_cycle_3 = graphene.String()
     start_cycle_4 = graphene.String()
-
-    renewal_discount_perc = graphene.Int(default_value=0)
-    renewal_discount_period = graphene.Int(default_value=0)
-    enrolment_discount_perc = graphene.Int(default_value=0)
-    enrolment_discount_period = graphene.Int(default_value=0)
-
     # Deductibles & Ceilings
     ceiling_interpretation = graphene.Field(CeilingInterpretationEnum)
     ceiling_type = graphene.Field(CeilingTypeEnum)
-
     deductible = graphene.Decimal(max_digits=18, decimal_places=2)
     deductible_ip = graphene.Decimal(
         max_digits=18,
@@ -286,7 +279,6 @@ class ProductInputType(OpenIMISMutation.Input):
         max_digits=18,
         decimal_places=2,
     )
-
     ceiling = graphene.Decimal(
         max_digits=18,
         decimal_places=2,
@@ -296,7 +288,6 @@ class ProductInputType(OpenIMISMutation.Input):
         decimal_places=2,
     )
     ceiling_op = graphene.Decimal(max_digits=18, decimal_places=2)
-
     max_ceiling_policy = graphene.Decimal(
         max_digits=18, decimal_places=2, required=False
     )
@@ -306,7 +297,6 @@ class ProductInputType(OpenIMISMutation.Input):
     max_ceiling_policy_op = graphene.Decimal(
         max_digits=18, decimal_places=2, required=False
     )
-
     max_policy_extra_member = graphene.Decimal(
         max_digits=18, decimal_places=2, required=False
     )
@@ -316,26 +306,23 @@ class ProductInputType(OpenIMISMutation.Input):
     max_policy_extra_member_ip = graphene.Decimal(
         max_digits=18, decimal_places=2, required=False
     )
-
     max_no_consultation = graphene.Int()
     max_no_surgery = graphene.Int()
     max_no_delivery = graphene.Int()
     max_no_hospitalization = graphene.Int()
     max_no_visits = graphene.Int()
     max_no_antenatal = graphene.Int()
-
     max_amount_consultation = graphene.Decimal(max_digits=18, decimal_places=2)
     max_amount_surgery = graphene.Decimal(max_digits=18, decimal_places=2)
     max_amount_delivery = graphene.Decimal(max_digits=18, decimal_places=2)
     max_amount_hospitalization = graphene.Decimal(
         max_digits=18, decimal_places=2)
     max_amount_antenatal = graphene.Decimal(max_digits=18, decimal_places=2)
-
     relative_prices = graphene.List(RelativePricesInput)
     items = graphene.List(graphene.NonNull(ProductItemInput))
     services = graphene.List(graphene.NonNull(ProductServiceInput))
-    age_minimal = graphene.Int()
     age_maximal = graphene.Int()
+    membership_types = graphene.JSONString(required=False)
 
 
 class CreateProductMutation(CreateOrUpdateProductMutation):

@@ -21,13 +21,6 @@ def create_test_product(code=None, valid=True, custom_props=None):
                 "code": code,
                 "name": "Test product " + code,
                 "lump_sum": 123.45,
-                "max_members": 5,
-                "grace_period_enrolment": 1,
-                "insurance_period": 12,
-                "date_from": "2019-01-01",
-                "date_to": "2049-01-01",
-                "validity_from": "2019-01-01",
-                "validity_to": None if valid else "2019-01-01",
                 "audit_user_id": -1,
                 **custom_props
             }

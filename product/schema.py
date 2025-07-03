@@ -52,18 +52,14 @@ class ProductGQLType(DjangoObjectType):
     ceiling_interpretation = graphene.Field(CeilingInterpretationEnum)
     relative_prices = graphene.NonNull(
         graphene.List(ProductRelativePricesGQLType))
-
     ceiling_type = graphene.Field(CeilingTypeEnum)
-
     deductible = graphene.Decimal()
     deductible_ip = graphene.Decimal()
     deductible_op = graphene.Decimal()
-
     ceiling = graphene.Decimal()
     ceiling_ip = graphene.Decimal()
     ceiling_op = graphene.Decimal()
 
-    # TODO: These resolvers should not exist and be integrated in the Product model directly
     def resolve_deductible(self, info, **kwargs):
         ceiling_type = self.ceiling_type
         if ceiling_type == "I":
