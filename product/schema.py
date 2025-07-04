@@ -152,8 +152,6 @@ class ProductGQLType(DjangoObjectType):
             "uuid": ["exact"],
             "code": ["exact", "icontains", "istartswith"],
             "name": ["exact", "icontains", "istartswith"],
-            "date_from": ["exact", "gt", "gte", "lt", "lte"],
-            "date_to": ["exact", "gt", "gte", "lt", "lte"],
             "location": ["isnull"],
         }
 
