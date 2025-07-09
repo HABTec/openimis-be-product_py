@@ -89,9 +89,9 @@ class MutationTestProduct(openIMISGraphQLTestCase):
             "ceilingIp": "140",
             "ceilingOp": "12000",
             "administrationPeriod": 0,
-            "uuid": "",
+            "uuid": "{self.product.uuid}",
             "code": "{self.product.code}",
-            "locationUuid": "{str(self.product.location.uuid)}",
+            "locationUuid": "{str(self.product.location.uuid) if self.product.location else ''}",
             "clientMutationLabel": "Update product Basic Cover Tahida",
             "clientMutationId": "a15498d1-bc77-4516-99d6-23d5d2023d96"
           }}

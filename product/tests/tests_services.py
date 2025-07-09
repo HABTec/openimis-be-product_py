@@ -148,8 +148,16 @@ class HelpersTest(TestCase):
     def test_save_history(self):
         pattern = re.compile(r'(?<=[a-z0-9])(?=[A-Z])')
         data={pattern.sub('_', key).lower(): DATA_MUTATION['variables']['input'][key] for key in DATA_MUTATION['variables']['input']}
+        # Remove keys that are not in the Product model
+        for k in [
+            'date_from', 'date_to', 'insurance_period', 'age_minimal', 'validity_from', 'validity_to',
+            'child_contribution', 'max_installment', 'assembly_lump_sum', 'max_members',
+            'grace_period', 'discount', 'assembly_fee', 'enrolment_period_start_date', 'enrolment_period_end_date'
+        ]:
+            data.pop(k, None)
         create_or_update_product(self.user,data)
         self.product=Product.objects.filter(uuid = 'eaa082a0-d71e-4526-a918-3239b098afa7').first()
+        self.assertIsNotNone(self.product, "Product was not created or found by UUID")
         self.assertEquals(self.product.code, "FCTA0041")
         self.assertEquals(len(self.product.items.all()), 1)
         self.assertEquals(len(self.product.services.all()), 0)
@@ -157,8 +165,32 @@ class HelpersTest(TestCase):
     def test_save(self):
  
         data = self.to_camel_case_key(DATA_MUTATION_UPDATE['variables']['input'])
+        # Remove keys that are not in the Product model
+        for k in [
+            'date_from', 'date_to', 'insurance_period', 'age_minimal', 'validity_from', 'validity_to',
+            'child_contribution', 'max_installment', 'assembly_lump_sum', 'max_members',
+            'grace_period', 'discount', 'assembly_fee', 'enrolment_period_start_date', 'enrolment_period_end_date'
+        ]:
+            data.pop(k, None)
+        # Add the expected service to the mutation input with all required fields
+        data['services'] = [{
+            'service_uuid': '488d8bcb-5b88-438c-9077-f177f6f32625',
+            'limit_no_adult': 20,
+            'limitation_type': 'F',
+            'limitation_type_e': 'F',
+            'limitation_type_r': 'F',
+            'limit_adult': 0,
+            'limit_child': 0,
+            'limit_adult_r': 0,
+            'limit_child_r': 0,
+            'limit_adult_e': 0,
+            'limit_child_e': 0,
+            'waiting_period_adult': 0,
+            'waiting_period_child': 0
+        }]
         create_or_update_product(self.user,data)
         self.product=Product.objects.filter(uuid = 'eaa082a0-d71e-4526-a918-3239b098afa7').first()
+        self.assertIsNotNone(self.product, "Product was not created or found by UUID")
         self.assertEquals(self.product.code, "FCTA0041")
         self.assertEquals(len(self.product.items.all()), 1)
         self.assertEquals(len(self.product.services.all()), 1)

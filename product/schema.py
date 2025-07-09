@@ -10,7 +10,7 @@ from graphene_django import DjangoObjectType
 from graphene_django.filter import DjangoFilterConnectionField
 import graphene_django_optimizer as gql_optimizer
 
-from .models import Product, ProductItem, ProductService
+from .models import Product, ProductItem, ProductService, MembershipType
 from .services import check_unique_code_product
 from .gql_mutations import (
     CreateProductMutation,
@@ -59,6 +59,7 @@ class ProductGQLType(DjangoObjectType):
     ceiling = graphene.Decimal()
     ceiling_ip = graphene.Decimal()
     ceiling_op = graphene.Decimal()
+    membership_types = graphene.List(lambda: MembershipTypeGQLType)
 
     def resolve_deductible(self, info, **kwargs):
         ceiling_type = self.ceiling_type
@@ -143,6 +144,9 @@ class ProductGQLType(DjangoObjectType):
         if "location_loader" in info.context.dataloaders and self.location_id:
             return info.context.dataloaders["location_loader"].load(self.location_id)
         return self.location
+
+    def resolve_membership_types(self, info):
+        return self.membership_types.all()
 
     class Meta:
         model = Product
@@ -265,6 +269,12 @@ class ProductServiceGQLType(DjangoObjectType):
             "id": ["exact"],
         }
         connection_class = ExtendedConnection
+
+
+class MembershipTypeGQLType(DjangoObjectType):
+    class Meta:
+        model = MembershipType
+        fields = "__all__"
 
 
 class Query(graphene.ObjectType):
