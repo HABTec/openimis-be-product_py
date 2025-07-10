@@ -2,6 +2,7 @@ import datetime
 from gettext import gettext as _
 from operator import or_
 from dataclasses import dataclass
+import uuid as uuidlib
 
 import graphene
 from core.schema import OpenIMISMutation
@@ -57,11 +58,23 @@ def extract_ceilings(data):
 
 
 def create_or_update_product(user, data, is_duplicate=False):
+    print("create_or_update_product called with data:", data)
     client_mutation_id = data.pop("client_mutation_id", None)
     data.pop("client_mutation_label", None)
     product_uuid = data.pop("uuid", None)
     location_uuid = data.pop("location_uuid", None)
     conversion_product_uuid = data.pop("conversion_product_uuid", None)
+    # Validate UUIDs if present
+    for uuid_val, label in [
+        (product_uuid, "product_uuid"),
+        (location_uuid, "location_uuid"),
+        (conversion_product_uuid, "conversion_product_uuid")
+    ]:
+        if uuid_val is not None:
+            try:
+                uuidlib.UUID(str(uuid_val))
+            except Exception:
+                raise ValueError(f"{label} is not a valid UUID: {uuid_val}")
     relative_prices = data.pop("relative_prices", None)
     items = data.pop("items", None)
     services = data.pop("services", None)
@@ -139,8 +152,6 @@ def create_or_update_product(user, data, is_duplicate=False):
                 raise ValueError(
                     "Service O,R,E co-insurance limits must be smaller or equal to 100.")
 
-    if data["date_from"] > data["date_to"]:
-        raise ValueError("date_from must be before date_to")
     if product_uuid:
         product = Product.objects.get(uuid=product_uuid)
         if product.validity_to:
@@ -177,7 +188,10 @@ def create_or_update_product(user, data, is_duplicate=False):
         product.membership_types.set(created_membership_types)
 
     if is_duplicate:
+        print("Returning product (duplicate):", product)
         return product
+    print("Returning product:", product)
+    return product
 
 
 class RelativePricesInput(graphene.InputObjectType):
@@ -332,27 +346,29 @@ class CreateProductMutation(CreateOrUpdateProductMutation):
     class Input(ProductInputType):
         code = graphene.String(required=True)
 
+    class Output(graphene.ObjectType):
+        product = graphene.Field(lambda: get_product_gqltype())
+        ok = graphene.Boolean()
+        message = graphene.String()
+
     @classmethod
     def async_mutate(cls, user, **data):
+        print("async_mutate called with data:", data)
         try:
-            cls.do_mutate(
+            from .schema import ProductGQLType
+            product = cls.do_mutate(
                 ProductConfig.gql_mutation_products_add_perms,
                 user,
                 **data,
             )
+            print("Product created:", product)
+            return cls.Output(product=product, ok=True, message="Product created successfully.")
         except ValueError as exc:
-            return [
-                {
-                    "message": str(exc)
-                }
-            ]
+            print("ValueError:", exc)
+            return cls.Output(product=None, ok=False, message=str(exc))
         except Exception as exc:
-            return [
-                {
-                    "message": _("product.mutation.failed_to_create_product"),
-                    "detail": str(exc),
-                }
-            ]
+            print("Exception:", exc)
+            return cls.Output(product=None, ok=False, message=str(exc))
 
 
 class DuplicateProductMutation(OpenIMISMutation):
@@ -496,3 +512,8 @@ class DeleteProductMutation(OpenIMISMutation):
         if len(errors) == 1:
             errors = errors[0]["list"]
         return errors
+
+
+def get_product_gqltype():
+    from .schema import ProductGQLType
+    return ProductGQLType
