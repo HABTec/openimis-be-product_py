@@ -20,6 +20,8 @@ from .gql_mutations import (
     CreateProductCustomMutation,
 )
 from .apps import ProductConfig
+from .custom_schema import Query as CustomQuery
+from .gql_types import MembershipTypeGQLType
 from django.utils.translation import gettext as _
 from core import filter_validity
 from .enums import (
@@ -272,13 +274,10 @@ class ProductServiceGQLType(DjangoObjectType):
         connection_class = ExtendedConnection
 
 
-class MembershipTypeGQLType(DjangoObjectType):
-    class Meta:
-        model = MembershipType
-        fields = "__all__"
 
 
-class Query(graphene.ObjectType):
+
+class Query(CustomQuery, graphene.ObjectType):
     products = DjangoFilterConnectionField(
         ProductGQLType,
         location=graphene.Int(),
