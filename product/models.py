@@ -364,6 +364,15 @@ class Product(VersionedModel):
         blank=True,
         related_name='products',
     )
+    card_replacement_fee = models.DecimalField(
+        db_column="CardReplacementFee",
+        max_digits=18,
+        decimal_places=2,
+        default=1,
+        null=False,
+        blank=False,
+        verbose_name="Card Replacement Fee",
+    )
 
     def has_cycle(self):
         return (

@@ -14,9 +14,10 @@ from .models import Product, ProductItem, ProductService, MembershipType
 from .services import check_unique_code_product
 from .gql_mutations import (
     CreateProductMutation,
+    DuplicateProductMutation,
     UpdateProductMutation,
     DeleteProductMutation,
-    DuplicateProductMutation
+    CreateProductCustomMutation,
 )
 from .apps import ProductConfig
 from django.utils.translation import gettext as _
@@ -358,3 +359,4 @@ class Mutation(graphene.ObjectType):
     duplicate_product = DuplicateProductMutation.Field()
     update_product = UpdateProductMutation.Field()
     delete_product = DeleteProductMutation.Field()
+    create_product_custom = CreateProductCustomMutation.Field()

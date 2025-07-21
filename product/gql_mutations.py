@@ -3,13 +3,19 @@ from gettext import gettext as _
 from operator import or_
 from dataclasses import dataclass
 import uuid as uuidlib
+from django.core.exceptions import ValidationError, PermissionDenied
+import json
+import traceback
 
 import graphene
 from core.schema import OpenIMISMutation
 from django.contrib.auth.models import AnonymousUser
 from django.core.exceptions import ValidationError, PermissionDenied
 from graphene.types.decimal import Decimal
-from location.models import Location
+from location.models import Location as LocationModel
+from django.db import transaction
+from django.utils import timezone
+from django.utils.translation import gettext as _
 from .services import (
     set_product_details,
     set_product_relative_distribution,
@@ -27,6 +33,9 @@ from .enums import (
     LimitTypeEnum,
     PriceOriginEnum,
 )
+from django.db import transaction
+from decimal import Decimal
+from product.models import MembershipType
 
 
 @dataclass
@@ -57,141 +66,365 @@ def extract_ceilings(data):
     )
 
 
+@transaction.atomic
 def create_or_update_product(user, data, is_duplicate=False):
-    print("create_or_update_product called with data:", data)
-    client_mutation_id = data.pop("client_mutation_id", None)
-    data.pop("client_mutation_label", None)
-    product_uuid = data.pop("uuid", None)
-    location_uuid = data.pop("location_uuid", None)
-    conversion_product_uuid = data.pop("conversion_product_uuid", None)
-    # Validate UUIDs if present
-    for uuid_val, label in [
-        (product_uuid, "product_uuid"),
-        (location_uuid, "location_uuid"),
-        (conversion_product_uuid, "conversion_product_uuid")
-    ]:
-        if uuid_val is not None:
+    """
+    Create or update a product with its related data in a single transaction.
+    
+    Args:
+        user: The user performing the action
+        data: Dictionary containing product data
+        is_duplicate: Boolean indicating if this is a duplicate operation
+        
+    Returns:
+        Product: The created or updated product instance
+        
+    Raises:
+        Exception: If there's any error during the operation
+    """
+    try:
+        # Parse membership_types if it's a string
+        membership_types_input = data.get("membership_types")
+        if membership_types_input and isinstance(membership_types_input, str):
             try:
-                uuidlib.UUID(str(uuid_val))
-            except Exception:
-                raise ValueError(f"{label} is not a valid UUID: {uuid_val}")
-    relative_prices = data.pop("relative_prices", None)
-    items = data.pop("items", None)
-    services = data.pop("services", None)
-    ceiling_type = data.get("ceiling_type", None)
-    deductibles = extract_deductibles(data)
-    ceilings = extract_ceilings(data)
-    membership_types_input = data.pop("membership_types", None)
-    created_membership_types = []
-    if membership_types_input:
-        region = membership_types_input["region"]
-        district = membership_types_input.get("district")
-        levels = membership_types_input["levels"]
-        for level_type in ["urban", "rural"]:
-            for idx, price in enumerate(levels.get(level_type, []), 1):
-                mt = MembershipType.objects.create(
-                    region=region,
-                    district=district,
-                    level_type=level_type,
-                    level_index=idx,
-                    price=price
-                )
-                created_membership_types.append(mt)
-    hist_id=None
-    incoming_code = data.get('code')
-    current_product = Product.objects.filter(uuid=product_uuid).first()
-    current_code = current_product.code if current_product else None
+                data["membership_types"] = json.loads(membership_types_input)
+            except Exception as e:
+                raise ValueError(f"membership_types must be a valid JSON string: {e}")
 
-    if current_code != incoming_code:
-        if check_unique_code_product(incoming_code):
-            raise ValidationError(_("mutation.product_code_duplicated"))
+        # Validate required fields
+        required_fields = ['code', 'name', 'lump_sum', 'card_replacement_fee']
+        missing = [f for f in required_fields if not data.get(f)]
+        if missing:
+            raise ValueError(f"Missing required fields: {', '.join(missing)}")
 
-    # Validate start cycles
-    for start_cycle_key in [
-        "start_cycle_1",
-        "start_cycle_2",
-        "start_cycle_3",
-        "start_cycle_4",
-    ]:
-        if start_cycle_key not in data or data[start_cycle_key] is None:
-            continue
+        # Set audit user ID
+        if hasattr(user, 'id_for_audit') and user.id_for_audit:
+            data['audit_user_id'] = user.id_for_audit
+        elif hasattr(user, 'id') and user.id:
+            data['audit_user_id'] = user.id
+        else:
+            data['audit_user_id'] = 1
+
+        # Process location UUID if provided
+        if "location_uuid" in data:
+            location_uuid = data.pop("location_uuid")
+            if location_uuid:
+                location_obj = LocationModel.objects.filter(uuid=location_uuid).first()
+                if not location_obj:
+                    raise ValueError(f"Location with UUID {location_uuid} does not exist.")
+                data["location_id"] = location_obj.id
+
+        # Process conversion product UUID if provided
+        if "conversion_product_uuid" in data:
+            conversion_uuid = data.pop("conversion_product_uuid")
+            if conversion_uuid:
+                product_obj = Product.objects.filter(uuid=conversion_uuid).first()
+                if not product_obj:
+                    raise ValueError(f"Product with UUID {conversion_uuid} does not exist.")
+                data["conversion_product_id"] = product_obj.id
+
+        # Map field names to match model
+        field_mappings = {
+            "deductible": "ded_insuree",
+            "deductible_ip": "ded_ip_insuree",
+            "deductible_op": "ded_op_insuree",
+            "ceiling": "max_insuree",
+            "ceiling_ip": "max_ip_insuree",
+            "ceiling_op": "max_op_insuree"
+        }
+        for source, target in field_mappings.items():
+            if source in data:
+                data[target] = data.pop(source)
+
+        # Remove any unmapped GraphQL fields that could cause issues
+        for field in ["deductible", "deductible_ip", "deductible_op", "ceiling", "ceiling_ip", "ceiling_op"]:
+            if field in data:
+                del data[field]
+
+        # Define all possible product fields
+        product_fields = [
+            'code', 'name', 'lump_sum', 'card_replacement_fee', 'audit_user_id', 'enrolment_period_start_date',
+            'enrolment_period_end_date', 'administration_period', 'recurrence', 'location_id',
+            'conversion_product_id', 'acc_code_remuneration', 'acc_code_premiums', 'premium_adult',
+            'threshold', 'share_contribution', 'registration_lump_sum', 'registration_fee',
+            'start_cycle_1', 'start_cycle_2', 'start_cycle_3', 'start_cycle_4', 'ceiling_interpretation',
+            'ceiling_type', 'ded_insuree', 'ded_ip_insuree', 'ded_op_insuree', 'max_insuree', 'max_ip_insuree',
+            'max_op_insuree', 'max_ceiling_policy', 'max_ceiling_policy_ip', 'max_ceiling_policy_op',
+            'max_policy_extra_member', 'max_policy_extra_member_op', 'max_policy_extra_member_ip',
+            'max_no_consultation', 'max_no_surgery', 'max_no_delivery', 'max_no_hospitalization',
+            'max_no_visits', 'max_no_antenatal', 'max_amount_consultation', 'max_amount_surgery',
+            'max_amount_delivery', 'max_amount_hospitalization', 'max_amount_antenatal', 'age_maximal'
+        ]
+        
+        # Filter and prepare product data
+        product_data = {k: v for k, v in data.items() 
+                       if k in product_fields and v is not None}
+
+        # Generate a UUID if not provided
+        if 'uuid' not in product_data:
+            product_data['uuid'] = str(uuidlib.uuid4())
+
+        # Start transaction
+        with transaction.atomic():
+            return _create_product_with_relations(user, product_data, is_duplicate)
+            
+    except Exception as e:
+        error_msg = f"Error in create_or_update_product: {str(e)}"
+        print(error_msg)
+        raise Exception(error_msg)
+
+def _create_product_with_relations(user, product_data, is_duplicate):
+    """
+    Helper function to create a product with its relations in a transaction.
+    """
+    from core.models import MutationLog
+    from django.db import transaction
+    import logging
+    from django.utils import timezone
+    from django.core.exceptions import ValidationError
+    
+    logger = logging.getLogger(__name__)
+    
+    # Start a new transaction
+    with transaction.atomic():
+        product = None
         try:
-            [d, m] = data[start_cycle_key].split("-")
-        except ValueError:
-            raise ValueError(
-                f"'{data[start_cycle_key]}' is not a correct value for product.start_cycle"
+            # Extract membership types data before creating the product
+            membership_types_data = product_data.pop('membership_types', None)
+            
+            # Get location if provided
+            location_id = None
+            if 'location_uuid' in product_data and product_data['location_uuid']:
+                try:
+                    location = LocationModel.objects.get(uuid=product_data['location_uuid'])
+                    location_id = location.id
+                except LocationModel.DoesNotExist:
+                    raise ValueError(f"Location with UUID {product_data['location_uuid']} not found")
+            
+            # Prepare all product fields
+            product_fields = {
+                'code': product_data['code'],
+                'name': product_data['name'],
+                'lump_sum': product_data.get('lump_sum', 0),
+                'card_replacement_fee': product_data.get('card_replacement_fee', 1),
+                'period_rel_prices': 'F',
+                'period_rel_prices_op': 'F',
+                'period_rel_prices_ip': 'F',
+                'audit_user_id': product_data.get('audit_user_id', 1),
+                'premium_adult': product_data.get('premium_adult', 0),
+                'location_id': location_id,
+                'validity_from': timezone.now(),
+                # Optional fields with defaults
+                'enrolment_period_start_date': product_data.get('enrolment_period_start_date'),
+                'enrolment_period_end_date': product_data.get('enrolment_period_end_date'),
+                'administration_period': product_data.get('administration_period'),
+                'recurrence': product_data.get('recurrence'),
+                'conversion_product_id': product_data.get('conversion_product_id'),
+                'threshold': product_data.get('threshold'),
+                'share_contribution': product_data.get('share_contribution'),
+                'registration_lump_sum': product_data.get('registration_lump_sum'),
+                'registration_fee': product_data.get('registration_fee'),
+                'start_cycle_1': product_data.get('start_cycle_1'),
+                'start_cycle_2': product_data.get('start_cycle_2'),
+                'start_cycle_3': product_data.get('start_cycle_3'),
+                'start_cycle_4': product_data.get('start_cycle_4'),
+                'ceiling_interpretation': product_data.get('ceiling_interpretation'),
+                'ceiling_type': product_data.get('ceiling_type'),
+                'ded_insuree': product_data.get('ded_insuree'),
+                'ded_ip_insuree': product_data.get('ded_ip_insuree'),
+                'ded_op_insuree': product_data.get('ded_op_insuree'),
+                'max_insuree': product_data.get('max_insuree'),
+                'max_ip_insuree': product_data.get('max_ip_insuree'),
+                'max_op_insuree': product_data.get('max_op_insuree'),
+                'max_ceiling_policy': product_data.get('max_ceiling_policy'),
+                'max_ceiling_policy_ip': product_data.get('max_ceiling_policy_ip'),
+                'max_ceiling_policy_op': product_data.get('max_ceiling_policy_op'),
+                'max_policy_extra_member': product_data.get('max_policy_extra_member'),
+                'max_policy_extra_member_op': product_data.get('max_policy_extra_member_op'),
+                'max_policy_extra_member_ip': product_data.get('max_policy_extra_member_ip'),
+                'max_no_consultation': product_data.get('max_no_consultation'),
+                'max_no_surgery': product_data.get('max_no_surgery'),
+                'max_no_delivery': product_data.get('max_no_delivery'),
+                'max_no_hospitalization': product_data.get('max_no_hospitalization'),
+                'max_no_visits': product_data.get('max_no_visits'),
+                'max_no_antenatal': product_data.get('max_no_antenatal'),
+                'max_amount_consultation': product_data.get('max_amount_consultation'),
+                'max_amount_surgery': product_data.get('max_amount_surgery'),
+                'max_amount_delivery': product_data.get('max_amount_delivery'),
+                'max_amount_hospitalization': product_data.get('max_amount_hospitalization'),
+                'max_amount_antenatal': product_data.get('max_amount_antenatal'),
+                'age_maximal': product_data.get('age_maximal')
+            }
+            
+            # Debug print to see what is being passed
+            print("product_fields being passed to Product:", product_fields)
+            # Remove any unmapped GraphQL fields that could cause issues
+            unmapped = ['deductible', 'deductible_ip', 'deductible_op', 'ceiling', 'ceiling_ip', 'ceiling_op']
+            for key in unmapped:
+                if key in product_fields:
+                    del product_fields[key]
+
+            # Debug print all fields before save
+            print("About to save Product with fields:")
+            for k, v in product_fields.items():
+                print(f"  {k}: {v!r}")
+            try:
+                product = Product(**{k: v for k, v in product_fields.items() if v is not None})
+                product.save(force_insert=True)
+            except Exception as e:
+                print("Error saving Product:", e)
+                traceback.print_exc()
+                raise
+            logger.info(f"Product created with ID: {product.id}")
+            
+            # Now process membership types if provided (after product is saved)
+            # if membership_types_data:
+            #     _process_membership_types(product, {'membership_types': membership_types_data})
+            
+            # Process product items if provided
+            if 'product_items' in product_data and product_data['product_items']:
+                _process_product_items(product, product_data)
+            
+            # Create mutation log if needed
+            if 'client_mutation_id' in product_data and product_data['client_mutation_id']:
+                mutation = MutationLog.objects.create(
+                    user=user,
+                    object_id=product.id,
+                    client_mutation_id=product_data['client_mutation_id'],
+                    client_mutation_label="Add Product"
+                )
+                ProductMutation.objects.create(
+                    product=product,
+                    mutation=mutation
+                )
+            
+            # Refresh and return the product
+            product.refresh_from_db()
+            logger.info(f"Successfully created product {product.id} with all related data")
+            return product
+            
+        except Exception as e:
+            error_msg = f"Error in _create_product_with_relations: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            
+            # Cleanup in case of error
+            if product and hasattr(product, 'id') and product.id:
+                logger.warning(f"Cleaning up product {product.id} due to error")
+                try:
+                    product.delete()
+                except Exception as delete_error:
+                    logger.error(f"Error during cleanup: {str(delete_error)}")
+            
+            # Re-raise with appropriate error message
+            error_msg = str(e)
+            if 'duplicate key' in error_msg.lower():
+                error_msg = "A product with this code already exists."
+            elif hasattr(e, 'message_dict'):
+                error_msg = ", ".join([f"{k}: {v[0]}" for k, v in e.message_dict.items()])
+                
+            raise Exception(f"Failed to create product: {error_msg}")
+
+def _process_membership_types(product, product_data):
+    """Process and create membership types for the product."""
+    if 'membership_types' not in product_data or not product_data['membership_types']:
+        print("No membership types provided")
+        return
+        
+    membership_types_input = product_data['membership_types']
+    if not isinstance(membership_types_input, dict):
+        print("Warning: membership_types should be a dictionary")
+        return
+    
+    region = membership_types_input.get('region')
+    district = membership_types_input.get('district')
+    levels = membership_types_input.get('levels', {})
+    
+    if not product or not hasattr(product, 'id') or not product.id:
+        raise ValueError("Cannot process membership types: Product has no ID")
+    
+    # Ensure we have a valid audit user ID
+    audit_user_id = getattr(product, 'audit_user_id', 1) or 1
+
+    # Get valid MembershipType fields
+    valid_fields = {f.name for f in MembershipType._meta.get_fields() if f.concrete and not f.many_to_many and not f.one_to_many}
+    
+    try:
+        print(f"Processing membership types for product {product.id}")
+        
+        # Create a list to hold all membership types
+        membership_types = []
+        
+        # Create urban membership types
+        for idx, price in enumerate(levels.get('urban', []), start=1):
+            if price is not None:  # Only create if price is not None
+                try:
+                    mt_data = {
+                        'region': region,
+                        'district': district,
+                        'level_type': 'urban',
+                        'level_index': idx,
+                        'price': price,
+                        'audit_user_id': audit_user_id
+                    }
+                    filtered_mt_data = {k: v for k, v in mt_data.items() if k in valid_fields}
+                    membership_type = MembershipType.objects.create(**filtered_mt_data)
+                    membership_types.append(membership_type)
+                    print(f"Created urban membership type {membership_type.id} for product {product.id}")
+                except Exception as e:
+                    print(f"Error creating urban membership type: {str(e)}")
+                    raise
+        
+        # Create rural membership types
+        for idx, price in enumerate(levels.get('rural', []), start=1):
+            if price is not None:  # Only create if price is not None
+                try:
+                    mt_data = {
+                        'region': region,
+                        'district': district,
+                        'level_type': 'rural',
+                        'level_index': idx,
+                        'price': price,
+                        'audit_user_id': audit_user_id
+                    }
+                    filtered_mt_data = {k: v for k, v in mt_data.items() if k in valid_fields}
+                    membership_type = MembershipType.objects.create(**filtered_mt_data)
+                    membership_types.append(membership_type)
+                    print(f"Created rural membership type {membership_type.id} for product {product.id}")
+                except Exception as e:
+                    print(f"Error creating rural membership type: {str(e)}")
+                    raise
+        
+        # Clear existing membership types and add the new ones in a single operation
+        if membership_types:
+            with transaction.atomic():
+                product.membership_types.clear()
+                product.membership_types.add(*membership_types)
+                print(f"Successfully updated {len(membership_types)} membership types for product {product.id}")
+        else:
+            print("No valid membership types to add")
+            
+    except Exception as e:
+        error_msg = f"Error processing membership types: {str(e)}"
+        print(error_msg)
+        raise Exception(error_msg) from e
+
+def _process_product_items(product, product_data):
+    """Process and create product items."""
+    if 'product_items' not in product_data or not product_data['product_items']:
+        return
+        
+    for item_data in product_data['product_items']:
+        try:
+            ProductItem.objects.create(
+                product=product,
+                item_id=item_data['item_id'],
+                price=item_data.get('price', 0),
+                audit_user_id=product_data.get('audit_user_id', 1)
             )
-
-    if items:
-        for item in items:
-            values = [(item['limitation_type'], item['limit_adult']),
-                      (item['limitation_type_e'], item['limit_adult_e']),
-                      (item['limitation_type_r'], item['limit_adult_r']),
-                      (item['limitation_type'], item['limit_child']),
-                      (item['limitation_type_e'], item['limit_child_e']),
-                      (item['limitation_type_r'], item['limit_child_r'])]
-            # checking if value can be interpreted as percentage
-            if not all([True if float(i[1]) >= 0 else False for i in values]):
-                raise ValueError("Item O,R,E limits must be positive.")
-            if not all([True if float(i[1]) <= 100 else False for i in values if i[0] != LIMIT_CHOICES[0][0]]):
-                raise ValueError(
-                    "Item O,R,E co-insurance limits must be smaller or equal to 100.")
-
-    if services:
-        for service in services:
-            values = [(service['limitation_type'], service['limit_adult']),
-                      (service['limitation_type_e'], service['limit_adult_e']),
-                      (service['limitation_type_r'], service['limit_adult_r']),
-                      (service['limitation_type'], service['limit_child']),
-                      (service['limitation_type_e'], service['limit_child_e']),
-                      (service['limitation_type_r'], service['limit_child_r'])]
-            # checking if value can be interpreted as percentage
-            if not all([True if float(i[1]) >= 0 else False for i in values]):
-                raise ValueError("Service O,R,E limits must be positive.")
-            if not all([True if float(i[1]) <= 100 else False for i in values if i[0] != LIMIT_CHOICES[0][0]]):
-                raise ValueError(
-                    "Service O,R,E co-insurance limits must be smaller or equal to 100.")
-
-    if product_uuid:
-        product = Product.objects.get(uuid=product_uuid)
-        if product.validity_to:
-            raise ValidationError("Cannot update historical data.")
-        hist_id = save_product_history(product,items,services)
-        for (key, value) in data.items():
-            setattr(product, key, value)
-    else:
-        product = Product.objects.create(**data)
-
-    if location_uuid is not None:
-        product.location = Location.objects.get(uuid=location_uuid)
-
-    if conversion_product_uuid is not None:
-        product.conversion_product = Product.objects.get(
-            uuid=conversion_product_uuid)
-    set_product_details(product.items, 'Item', hist_id, items, user) 
-    set_product_details(product.services,'Service', hist_id, services, user) 
-    set_product_relative_distribution(product, hist_id, relative_prices,user)
-
-    set_product_deductible_and_ceiling(
-        product, ceiling_type, deductibles, ceilings, user
-    )
-
-    product.validity_from = datetime.datetime.now()
-    product.save()
-
-    if client_mutation_id:
-        ProductMutation.object_mutated(
-            user, client_mutation_id=client_mutation_id, product=product
-        )
-
-    if created_membership_types:
-        product.membership_types.set(created_membership_types)
-
-    if is_duplicate:
-        print("Returning product (duplicate):", product)
-        return product
-    print("Returning product:", product)
-    return product
+            print(f"Created product item for product {product.id}")
+        except Exception as e:
+            print(f"Error creating product item: {str(e)}")
+            raise
 
 
 class RelativePricesInput(graphene.InputObjectType):
@@ -337,6 +570,7 @@ class ProductInputType(OpenIMISMutation.Input):
     services = graphene.List(graphene.NonNull(ProductServiceInput))
     age_maximal = graphene.Int()
     membership_types = graphene.JSONString(required=False)
+    card_replacement_fee = graphene.Decimal(max_digits=18, decimal_places=2, required=True, default_value=1)
 
 
 class CreateProductMutation(CreateOrUpdateProductMutation):
@@ -346,29 +580,56 @@ class CreateProductMutation(CreateOrUpdateProductMutation):
     class Input(ProductInputType):
         code = graphene.String(required=True)
 
-    class Output(graphene.ObjectType):
-        product = graphene.Field(lambda: get_product_gqltype())
-        ok = graphene.Boolean()
-        message = graphene.String()
+    # Output class removed to allow dict return mapping
 
     @classmethod
     def async_mutate(cls, user, **data):
         print("async_mutate called with data:", data)
         try:
             from .schema import ProductGQLType
-            product = cls.do_mutate(
-                ProductConfig.gql_mutation_products_add_perms,
-                user,
-                **data,
-            )
+            membership_types_raw = data.get("membership_types")
+            membership_types_data = None
+            if membership_types_raw:
+                if isinstance(membership_types_raw, str):
+                    try:
+                        membership_types_data = json.loads(membership_types_raw)
+                    except Exception as e:
+                        return {"ok": False, "message": f"Invalid membershipTypes JSON: {e}", "product": None}
+                elif isinstance(membership_types_raw, dict):
+                    membership_types_data = membership_types_raw
+                else:
+                    return {"ok": False, "message": "membershipTypes must be a JSON string or dict", "product": None}
+                data["membership_types"] = membership_types_data
+            required_fields = ["code", "name", "lump_sum", "card_replacement_fee"]
+            missing = [f for f in required_fields if not data.get(f)]
+            if missing:
+                return {"ok": False, "message": f"Missing required fields: {', '.join(missing)}", "product": None}
+            try:
+                product = cls.do_mutate(
+                    ProductConfig.gql_mutation_products_add_perms,
+                    user,
+                    **data,
+                )
+            except Exception as exc:
+                print("Exception in do_mutate:", exc)
+                return {"ok": False, "message": str(exc), "product": None}
             print("Product created:", product)
-            return cls.Output(product=product, ok=True, message="Product created successfully.")
+            return {
+                "ok": True,
+                "message": "Product created successfully.",
+                "product": {
+                    "id": getattr(product, "id", None),
+                    "code": getattr(product, "code", None),
+                    "name": getattr(product, "name", None),
+                    "cardReplacementFee": str(getattr(product, "card_replacement_fee", "")) if getattr(product, "card_replacement_fee", None) is not None else None,
+                }
+            }
         except ValueError as exc:
             print("ValueError:", exc)
-            return cls.Output(product=None, ok=False, message=str(exc))
+            return {"ok": False, "message": str(exc), "product": None}
         except Exception as exc:
             print("Exception:", exc)
-            return cls.Output(product=None, ok=False, message=str(exc))
+            return {"ok": False, "message": str(exc), "product": None}
 
 
 class DuplicateProductMutation(OpenIMISMutation):
@@ -517,3 +778,63 @@ class DeleteProductMutation(OpenIMISMutation):
 def get_product_gqltype():
     from .schema import ProductGQLType
     return ProductGQLType
+
+class CreateProductCustomMutation(graphene.Mutation):
+    class Arguments:
+        code = graphene.String(required=True)
+        name = graphene.String(required=True)
+        lump_sum = graphene.Decimal(required=True)
+        card_replacement_fee = graphene.Decimal(required=True)
+        premium_adult = graphene.Decimal(required=False)
+        membership_types = graphene.JSONString(required=False)
+        age_maximal = graphene.Int(required=False)  # Add this line
+        # Add more fields as needed
+
+    ok = graphene.Boolean()
+    message = graphene.String()
+    product = graphene.Field(lambda: __import__("product.schema", fromlist=["ProductGQLType"]).ProductGQLType)
+
+    @classmethod
+    def mutate(cls, root, info, code, name, lump_sum, card_replacement_fee, premium_adult=None, membership_types=None, age_maximal=None, **kwargs):
+        from .schema import ProductGQLType
+        try:
+            user = getattr(info.context, 'user', None)
+            audit_user_id = getattr(user, 'id_for_audit', None) or getattr(user, 'id', None) or 1
+            # Parse membership_types if provided
+            membership_types_data = None
+            if membership_types:
+                import json
+                if isinstance(membership_types, str):
+                    membership_types_data = json.loads(membership_types)
+                elif isinstance(membership_types, dict):
+                    membership_types_data = membership_types
+                else:
+                    return CreateProductCustomMutation(
+                        ok=False,
+                        message="membership_types must be a JSON string or dict",
+                        product=None
+                    )
+            product = Product.objects.create(
+                code=code,
+                name=name,
+                lump_sum=lump_sum,
+                card_replacement_fee=card_replacement_fee,
+                premium_adult=premium_adult,
+                audit_user_id=audit_user_id,
+                age_maximal=age_maximal,  # Add this line
+            )
+            # Handle membership_types many-to-many
+            if membership_types_data:
+                from .gql_mutations import _process_membership_types
+                _process_membership_types(product, {'membership_types': membership_types_data})
+            return CreateProductCustomMutation(
+                ok=True,
+                message="Product created successfully.",
+                product=product
+            )
+        except Exception as e:
+            return CreateProductCustomMutation(
+                ok=False,
+                message=str(e),
+                product=None
+            )
