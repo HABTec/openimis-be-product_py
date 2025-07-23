@@ -1,30 +1,23 @@
 import datetime
-from gettext import gettext as _
-from operator import or_
-from dataclasses import dataclass
-import uuid as uuidlib
-from django.core.exceptions import ValidationError, PermissionDenied
 import json
+import logging
 import traceback
-
-import graphene
-from core.schema import OpenIMISMutation
-from django.contrib.auth.models import AnonymousUser
 from django.core.exceptions import ValidationError, PermissionDenied
-from graphene.types.decimal import Decimal
-from location.models import Location as LocationModel
-from django.db import transaction
+from decimal import Decimal
+from django.contrib.auth.models import AnonymousUser
 from django.utils import timezone
 from django.utils.translation import gettext as _
-from .services import (
-    set_product_details,
-    set_product_relative_distribution,
-    set_product_deductible_and_ceiling,
-    save_product_history,
-    check_unique_code_product
-)
+from django.db import transaction
+import graphene
+from location.models import Location as LocationModel
+from operator import or_
+
+from core.models import MutationLog
+from core.schema import OpenIMISMutation
+from dataclasses import dataclass
+import uuid as uuidlib
+
 from .apps import ProductConfig
-from .models import Product, ProductItem, ProductService, ProductMutation, LIMIT_CHOICES, MembershipType
 from .enums import (
     CareTypeEnum,
     CeilingExclusionEnum,
@@ -33,9 +26,24 @@ from .enums import (
     LimitTypeEnum,
     PriceOriginEnum,
 )
-from django.db import transaction
-from decimal import Decimal
-from product.models import MembershipType
+from .models import (
+    LIMIT_CHOICES,
+    MembershipType,
+    Product,
+    ProductItem,
+    ProductService,
+    ProductMutation,
+)
+from .services import (
+    check_unique_code_product,
+    save_product_history,
+    set_product_deductible_and_ceiling,
+    set_product_details,
+    set_product_relative_distribution,
+)
+
+# Module-level logger
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -43,7 +51,7 @@ class DeductibleOrCeilingValue:
     all: Decimal
     ip: Decimal
     op: Decimal
-    
+
     def __init__(self, all, ip, op):
         self.all = all
         self.ip = ip
@@ -52,17 +60,17 @@ class DeductibleOrCeilingValue:
 
 def extract_deductibles(data):
     return DeductibleOrCeilingValue(
-        all = data.pop("deductible", 0),
-        ip = data.pop("deductible_ip", 0),
-        op = data.pop("deductible_op", 0),
+        all=data.pop("deductible", 0),
+        ip=data.pop("deductible_ip", 0),
+        op=data.pop("deductible_op", 0),
     )
 
 
 def extract_ceilings(data):
     return DeductibleOrCeilingValue(
-        all = data.pop("ceiling", 0), 
-        ip = data.pop("ceiling_ip", 0),
-        op = data.pop("ceiling_op", 0)
+        all=data.pop("ceiling", 0),
+        ip=data.pop("ceiling_ip", 0),
+        op=data.pop("ceiling_op", 0)
     )
 
 
@@ -70,17 +78,31 @@ def extract_ceilings(data):
 def create_or_update_product(user, data, is_duplicate=False):
     """
     Create or update a product with its related data in a single transaction.
-    
+
+    This function handles the creation or update of a product, including its related
+    membership types and other attributes. It ensures that all operations are performed
+    within a single database transaction to maintain data integrity.
+
     Args:
-        user: The user performing the action
-        data: Dictionary containing product data
-        is_duplicate: Boolean indicating if this is a duplicate operation
-        
+        user (User): The user performing the action. Must have attributes `id` or `id_for_audit`.
+        data (dict): A dictionary containing product data. Required keys include:
+            - "code" (str): The unique code for the product.
+            - "name" (str): The name of the product.
+            - "lump_sum" (Decimal): The lump sum amount for the product.
+            - "card_replacement_fee" (Decimal): The fee for card replacement.
+            Optional keys include:
+            - "membership_types" (str or list): JSON string or list of membership types.
+            - "deductible", "deductible_ip", "deductible_op" (Decimal): Deductible values.
+            - "ceiling", "ceiling_ip", "ceiling_op" (Decimal): Ceiling values.
+        is_duplicate (bool): If True, the function will duplicate the product data.
+
     Returns:
-        Product: The created or updated product instance
-        
+        Product: The created or updated product instance.
+
     Raises:
-        Exception: If there's any error during the operation
+        ValueError: If required fields are missing or `membership_types` is invalid.
+        PermissionDenied: If the user does not have permission to perform the action.
+        Exception: For any other errors during the operation.
     """
     try:
         # Parse membership_types if it's a string
@@ -170,20 +192,14 @@ def create_or_update_product(user, data, is_duplicate=False):
             
     except Exception as e:
         error_msg = f"Error in create_or_update_product: {str(e)}"
-        print(error_msg)
+        logger.error(error_msg, exc_info=True)
         raise Exception(error_msg)
 
 def _create_product_with_relations(user, product_data, is_duplicate):
     """
     Helper function to create a product with its relations in a transaction.
     """
-    from core.models import MutationLog
-    from django.db import transaction
-    import logging
-    from django.utils import timezone
-    from django.core.exceptions import ValidationError
     
-    logger = logging.getLogger(__name__)
     
     # Start a new transaction
     with transaction.atomic():
@@ -256,24 +272,22 @@ def _create_product_with_relations(user, product_data, is_duplicate):
                 'age_maximal': product_data.get('age_maximal')
             }
             
-            # Debug print to see what is being passed
-            print("product_fields being passed to Product:", product_fields)
+            # Debug log to see what is being passed
+            logger.debug("product_fields being passed to Product: %s", product_fields)
             # Remove any unmapped GraphQL fields that could cause issues
             unmapped = ['deductible', 'deductible_ip', 'deductible_op', 'ceiling', 'ceiling_ip', 'ceiling_op']
             for key in unmapped:
                 if key in product_fields:
                     del product_fields[key]
 
-            # Debug print all fields before save
-            print("About to save Product with fields:")
-            for k, v in product_fields.items():
-                print(f"  {k}: {v!r}")
+            # Debug log all fields before save
+            logger.debug("About to save Product with fields: %s", {k: v for k, v in product_fields.items()})
             try:
                 product = Product(**{k: v for k, v in product_fields.items() if v is not None})
                 product.save(force_insert=True)
             except Exception as e:
-                print("Error saving Product:", e)
-                traceback.print_exc()
+                logger.error("Error saving Product: %s", e)
+                logger.exception("Exception occurred while saving Product")
                 raise
             logger.info(f"Product created with ID: {product.id}")
             
@@ -327,12 +341,12 @@ def _create_product_with_relations(user, product_data, is_duplicate):
 def _process_membership_types(product, product_data):
     """Process and create membership types for the product."""
     if 'membership_types' not in product_data or not product_data['membership_types']:
-        print("No membership types provided")
+        logger.info("No membership types provided")
         return
         
     membership_types_input = product_data['membership_types']
     if not isinstance(membership_types_input, dict):
-        print("Warning: membership_types should be a dictionary")
+        logger.warning("membership_types should be a dictionary")
         return
     
     region = membership_types_input.get('region')
@@ -349,7 +363,7 @@ def _process_membership_types(product, product_data):
     valid_fields = {f.name for f in MembershipType._meta.get_fields() if f.concrete and not f.many_to_many and not f.one_to_many}
     
     try:
-        print(f"Processing membership types for product {product.id}")
+        logger.info("Processing membership types for product %s", product.id)
         
         # Create a list to hold all membership types
         membership_types = []
@@ -369,9 +383,9 @@ def _process_membership_types(product, product_data):
                     filtered_mt_data = {k: v for k, v in mt_data.items() if k in valid_fields}
                     membership_type = MembershipType.objects.create(**filtered_mt_data)
                     membership_types.append(membership_type)
-                    print(f"Created urban membership type {membership_type.id} for product {product.id}")
+                    logger.debug("Created urban membership type %s for product %s", membership_type.id, product.id)
                 except Exception as e:
-                    print(f"Error creating urban membership type: {str(e)}")
+                    logger.error("Error creating urban membership type: %s", str(e))
                     raise
         
         # Create rural membership types
@@ -389,9 +403,9 @@ def _process_membership_types(product, product_data):
                     filtered_mt_data = {k: v for k, v in mt_data.items() if k in valid_fields}
                     membership_type = MembershipType.objects.create(**filtered_mt_data)
                     membership_types.append(membership_type)
-                    print(f"Created rural membership type {membership_type.id} for product {product.id}")
+                    logger.debug("Created rural membership type %s for product %s", membership_type.id, product.id)
                 except Exception as e:
-                    print(f"Error creating rural membership type: {str(e)}")
+                    logger.error("Error creating rural membership type: %s", str(e))
                     raise
         
         # Clear existing membership types and add the new ones in a single operation
@@ -399,13 +413,13 @@ def _process_membership_types(product, product_data):
             with transaction.atomic():
                 product.membership_types.clear()
                 product.membership_types.add(*membership_types)
-                print(f"Successfully updated {len(membership_types)} membership types for product {product.id}")
+                logger.info("Successfully updated %s membership types for product %s", len(membership_types), product.id)
         else:
-            print("No valid membership types to add")
+            logger.info("No valid membership types to add")
             
     except Exception as e:
         error_msg = f"Error processing membership types: {str(e)}"
-        print(error_msg)
+        logger.error(error_msg)
         raise Exception(error_msg) from e
 
 def _process_product_items(product, product_data):
@@ -423,7 +437,7 @@ def _process_product_items(product, product_data):
             )
             print(f"Created product item for product {product.id}")
         except Exception as e:
-            print(f"Error creating product item: {str(e)}")
+            logger.error(f"Error creating product item: {str(e)}")
             raise
 
 
@@ -584,7 +598,7 @@ class CreateProductMutation(CreateOrUpdateProductMutation):
 
     @classmethod
     def async_mutate(cls, user, **data):
-        print("async_mutate called with data:", data)
+        logger.debug("async_mutate called with data: %s", data)
         try:
             from .schema import ProductGQLType
             membership_types_raw = data.get("membership_types")
@@ -611,9 +625,9 @@ class CreateProductMutation(CreateOrUpdateProductMutation):
                     **data,
                 )
             except Exception as exc:
-                print("Exception in do_mutate:", exc)
+                logger.error("Exception in do_mutate: %s", exc)
                 return {"ok": False, "message": str(exc), "product": None}
-            print("Product created:", product)
+            logger.info("Product created: %s", product)
             return {
                 "ok": True,
                 "message": "Product created successfully.",
@@ -803,7 +817,6 @@ class CreateProductCustomMutation(graphene.Mutation):
             # Parse membership_types if provided
             membership_types_data = None
             if membership_types:
-                import json
                 if isinstance(membership_types, str):
                     membership_types_data = json.loads(membership_types)
                 elif isinstance(membership_types, dict):
@@ -825,7 +838,6 @@ class CreateProductCustomMutation(graphene.Mutation):
             )
             # Handle membership_types many-to-many
             if membership_types_data:
-                from .gql_mutations import _process_membership_types
                 _process_membership_types(product, {'membership_types': membership_types_data})
             return CreateProductCustomMutation(
                 ok=True,
