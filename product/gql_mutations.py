@@ -598,7 +598,7 @@ class CreateProductMutation(CreateOrUpdateProductMutation):
 
     @classmethod
     def async_mutate(cls, user, **data):
-        print("async_mutate called with data:", data)
+        logger.debug("async_mutate called with data: %s", data)
         try:
             from .schema import ProductGQLType
             membership_types_raw = data.get("membership_types")
