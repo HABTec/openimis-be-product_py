@@ -192,7 +192,7 @@ def create_or_update_product(user, data, is_duplicate=False):
             
     except Exception as e:
         error_msg = f"Error in create_or_update_product: {str(e)}"
-        print(error_msg)
+        logger.error(error_msg, exc_info=True)
         raise Exception(error_msg)
 
 def _create_product_with_relations(user, product_data, is_duplicate):
