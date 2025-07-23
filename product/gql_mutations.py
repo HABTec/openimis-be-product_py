@@ -437,7 +437,7 @@ def _process_product_items(product, product_data):
             )
             print(f"Created product item for product {product.id}")
         except Exception as e:
-            print(f"Error creating product item: {str(e)}")
+            logger.error(f"Error creating product item: {str(e)}")
             raise
 
 
