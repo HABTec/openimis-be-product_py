@@ -611,9 +611,9 @@ class CreateProductMutation(CreateOrUpdateProductMutation):
                     **data,
                 )
             except Exception as exc:
-                print("Exception in do_mutate:", exc)
+                logger.error("Exception in do_mutate: %s", exc)
                 return {"ok": False, "message": str(exc), "product": None}
-            print("Product created:", product)
+            logger.info("Product created: %s", product)
             return {
                 "ok": True,
                 "message": "Product created successfully.",
