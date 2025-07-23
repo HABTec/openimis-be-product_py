@@ -79,16 +79,30 @@ def create_or_update_product(user, data, is_duplicate=False):
     """
     Create or update a product with its related data in a single transaction.
 
+    This function handles the creation or update of a product, including its related
+    membership types and other attributes. It ensures that all operations are performed
+    within a single database transaction to maintain data integrity.
+
     Args:
-        user: The user performing the action
-        data: Dictionary containing product data
-        is_duplicate: Boolean indicating if this is a duplicate operation
+        user (User): The user performing the action. Must have attributes `id` or `id_for_audit`.
+        data (dict): A dictionary containing product data. Required keys include:
+            - "code" (str): The unique code for the product.
+            - "name" (str): The name of the product.
+            - "lump_sum" (Decimal): The lump sum amount for the product.
+            - "card_replacement_fee" (Decimal): The fee for card replacement.
+            Optional keys include:
+            - "membership_types" (str or list): JSON string or list of membership types.
+            - "deductible", "deductible_ip", "deductible_op" (Decimal): Deductible values.
+            - "ceiling", "ceiling_ip", "ceiling_op" (Decimal): Ceiling values.
+        is_duplicate (bool): If True, the function will duplicate the product data.
 
     Returns:
-        Product: The created or updated product instance
+        Product: The created or updated product instance.
 
     Raises:
-        Exception: If there's any error during the operation
+        ValueError: If required fields are missing or `membership_types` is invalid.
+        PermissionDenied: If the user does not have permission to perform the action.
+        Exception: For any other errors during the operation.
     """
     try:
         # Parse membership_types if it's a string
