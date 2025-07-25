@@ -113,6 +113,11 @@ def create_or_update_product(user, data, is_duplicate=False):
             except Exception as e:
                 raise ValueError(f"membership_types must be a valid JSON string: {e}")
 
+        # Validate chf_id_format
+        if 'chf_id_format' in data and data['chf_id_format'] is not None:
+            if data['chf_id_format'] not in (1, 2, 3):
+                raise ValueError('chf_id_format must be 1, 2, or 3')
+
         # Validate required fields
         required_fields = ['code', 'name', 'lump_sum', 'card_replacement_fee']
         missing = [f for f in required_fields if not data.get(f)]
@@ -175,18 +180,39 @@ def create_or_update_product(user, data, is_duplicate=False):
             'max_policy_extra_member', 'max_policy_extra_member_op', 'max_policy_extra_member_ip',
             'max_no_consultation', 'max_no_surgery', 'max_no_delivery', 'max_no_hospitalization',
             'max_no_visits', 'max_no_antenatal', 'max_amount_consultation', 'max_amount_surgery',
-            'max_amount_delivery', 'max_amount_hospitalization', 'max_amount_antenatal', 'age_maximal'
+            'max_amount_delivery', 'max_amount_hospitalization', 'max_amount_antenatal', 'age_maximal', 'chf_id_format'
         ]
         
         # Filter and prepare product data
         product_data = {k: v for k, v in data.items() 
                        if k in product_fields and v is not None}
 
-        # Generate a UUID if not provided
+        # If UUID is provided and this is not a duplication request, perform an update
+        if not is_duplicate and 'uuid' in data and data['uuid']:
+            existing_product = Product.objects.filter(uuid=data['uuid'], validity_to__isnull=True).first()
+            if existing_product:
+                # Update simple scalar fields directly
+                for field, value in product_data.items():
+                    # Skip fields that are not actual model attributes (e.g. membership_types handled separately)
+                    if hasattr(existing_product, field):
+                        setattr(existing_product, field, value)
+                # Ensure audit_user_id is set
+                existing_product.audit_user_id = data.get('audit_user_id', getattr(user, 'id_for_audit', getattr(user, 'id', 1)))
+                existing_product.save()
+
+                # Update membership types if provided
+                if 'membership_types' in data and data['membership_types']:
+                    _process_membership_types(existing_product, {'membership_types': data['membership_types']})
+
+                # Return the updated product after refresh
+                existing_product.refresh_from_db()
+                return existing_product
+
+        # Generate a UUID if not provided (for create path)
         if 'uuid' not in product_data:
             product_data['uuid'] = str(uuidlib.uuid4())
 
-        # Start transaction
+        # Start transaction for create path
         with transaction.atomic():
             return _create_product_with_relations(user, product_data, is_duplicate)
             
@@ -269,7 +295,8 @@ def _create_product_with_relations(user, product_data, is_duplicate):
                 'max_amount_delivery': product_data.get('max_amount_delivery'),
                 'max_amount_hospitalization': product_data.get('max_amount_hospitalization'),
                 'max_amount_antenatal': product_data.get('max_amount_antenatal'),
-                'age_maximal': product_data.get('age_maximal')
+                'age_maximal': product_data.get('age_maximal'),
+                'chf_id_format': product_data.get('chf_id_format')
             }
             
             # Debug log to see what is being passed
@@ -583,6 +610,7 @@ class ProductInputType(OpenIMISMutation.Input):
     items = graphene.List(graphene.NonNull(ProductItemInput))
     services = graphene.List(graphene.NonNull(ProductServiceInput))
     age_maximal = graphene.Int()
+    chf_id_format = graphene.Int(description="CHF ID format (1, 2 or 3)")
     membership_types = graphene.JSONString(required=False)
     card_replacement_fee = graphene.Decimal(max_digits=18, decimal_places=2, required=True, default_value=1)
 
@@ -801,7 +829,8 @@ class CreateProductCustomMutation(graphene.Mutation):
         card_replacement_fee = graphene.Decimal(required=True)
         premium_adult = graphene.Decimal(required=False)
         membership_types = graphene.JSONString(required=False)
-        age_maximal = graphene.Int(required=False)  # Add this line
+        age_maximal = graphene.Int(required=False)
+        chf_id_format = graphene.Int(required=False)
         # Add more fields as needed
 
     ok = graphene.Boolean()
@@ -809,7 +838,7 @@ class CreateProductCustomMutation(graphene.Mutation):
     product = graphene.Field(lambda: __import__("product.schema", fromlist=["ProductGQLType"]).ProductGQLType)
 
     @classmethod
-    def mutate(cls, root, info, code, name, lump_sum, card_replacement_fee, premium_adult=None, membership_types=None, age_maximal=None, **kwargs):
+    def mutate(cls, root, info, code, name, lump_sum, card_replacement_fee, premium_adult=None, membership_types=None, age_maximal=None, chf_id_format=None, **kwargs):
         from .schema import ProductGQLType
         try:
             user = getattr(info.context, 'user', None)
@@ -834,7 +863,8 @@ class CreateProductCustomMutation(graphene.Mutation):
                 card_replacement_fee=card_replacement_fee,
                 premium_adult=premium_adult,
                 audit_user_id=audit_user_id,
-                age_maximal=age_maximal,  # Add this line
+                age_maximal=age_maximal,
+                chf_id_format=chf_id_format
             )
             # Handle membership_types many-to-many
             if membership_types_data:

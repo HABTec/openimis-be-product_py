@@ -28,6 +28,7 @@ class CustomProductGQLType(DjangoObjectType):
             "name",
             "enrolment_period_start_date",
             "enrolment_period_end_date",
+            "chf_id_format",
         )
 
     def resolve_membership_types(self, info):
