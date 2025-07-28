@@ -357,6 +357,18 @@ class Product(VersionedModel):
     age_maximal = models.IntegerField(
         db_column="Max Age", blank=True, null=True
     )
+    # CHF ID Format field (values 1, 2 or 3)
+    CHF_ID_FORMAT_CHOICES = (
+        (1, gettext_lazy("Format 1")),
+        (2, gettext_lazy("Format 2")),
+        (3, gettext_lazy("Format 3")),
+    )
+    chf_id_format = models.PositiveSmallIntegerField(
+        db_column="CHFIDFormat",
+        choices=CHF_ID_FORMAT_CHOICES,
+        default=1,
+        help_text="CHF ID format (1, 2 or 3)",
+    )
     enrolment_period_start_date = models.DateField(blank=True, null=True)
     enrolment_period_end_date = models.DateField(blank=True, null=True)
     membership_types = models.ManyToManyField(
