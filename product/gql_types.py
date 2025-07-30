@@ -34,10 +34,10 @@ class MembershipTypeGQLType(DjangoObjectType):
 
     def resolve_region(self, info):
         if self.region_id:
-            return Location.objects.get(id=self.region_id)
+            return Location.objects.filter(id=self.region_id).first()
         return None
 
     def resolve_district(self, info):
         if self.district_id:
-            return Location.objects.get(id=self.district_id)
+            return Location.objects.filter(id=self.district_id).first()
         return None
