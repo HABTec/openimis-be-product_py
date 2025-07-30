@@ -1,8 +1,43 @@
+import graphene
 from graphene_django import DjangoObjectType
 from .models import MembershipType
+from location.models import Location
+
+
+class RegionGQLType(DjangoObjectType):
+    class Meta:
+        model = Location
+        fields = ("id", "uuid", "code", "name")
+
+
+class DistrictGQLType(DjangoObjectType):
+    class Meta:
+        model = Location
+        fields = ("id", "uuid", "code", "name")
 
 
 class MembershipTypeGQLType(DjangoObjectType):
     class Meta:
         model = MembershipType
-        fields = "__all__"
+        fields = (
+            "id",
+            "level_type",
+            "level_index",
+            "price",
+            "is_indigent",
+            "region",
+            "district",
+        )
+
+    region = graphene.Field(RegionGQLType)
+    district = graphene.Field(DistrictGQLType)
+
+    def resolve_region(self, info):
+        if self.region_id:
+            return Location.objects.filter(id=self.region_id).first()
+        return None
+
+    def resolve_district(self, info):
+        if self.district_id:
+            return Location.objects.filter(id=self.district_id).first()
+        return None

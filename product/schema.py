@@ -62,7 +62,10 @@ class ProductGQLType(DjangoObjectType):
     ceiling = graphene.Decimal()
     ceiling_ip = graphene.Decimal()
     ceiling_op = graphene.Decimal()
-    membership_types = graphene.List(lambda: MembershipTypeGQLType)
+    membership_types = graphene.List(MembershipTypeGQLType)
+
+    def resolve_membership_types(self, info):
+        return self.membership_types.all()
 
     def resolve_deductible(self, info, **kwargs):
         ceiling_type = self.ceiling_type
@@ -148,8 +151,7 @@ class ProductGQLType(DjangoObjectType):
             return info.context.dataloaders["location_loader"].load(self.location_id)
         return self.location
 
-    def resolve_membership_types(self, info):
-        return self.membership_types.all()
+
 
     class Meta:
         model = Product
