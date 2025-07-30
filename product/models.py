@@ -630,8 +630,8 @@ class MembershipType(models.Model):
         ("urban", "Urban"),
         ("rural", "Rural"),
     ]
-    region = models.CharField(max_length=100)
-    district = models.CharField(max_length=100, null=True, blank=True)
+    region_id = models.IntegerField(db_column="RegionID", null=True)
+    district_id = models.IntegerField(db_column="DistrictID", null=True, blank=True)
     level_type = models.CharField(max_length=10, choices=LEVEL_TYPE_CHOICES)
     level_index = models.PositiveIntegerField()  # 1-based index
     price = models.DecimalField(max_digits=10, decimal_places=2)
@@ -640,7 +640,7 @@ class MembershipType(models.Model):
 
     def clean(self):
         # Region is required for standard membership types but optional for indigent ones
-        if not self.region and not self.is_indigent:
+        if not self.region_id and not self.is_indigent:
             raise ValidationError("region is required for non-indigent membership types")
         if self.level_type not in dict(self.LEVEL_TYPE_CHOICES):
             raise ValidationError("level_type must be 'urban' or 'rural'")
@@ -660,8 +660,8 @@ class MembershipType(models.Model):
             prices = levels_dict.get(level_type, [])
             for idx, price in enumerate(prices, 1):
                 objs.append(cls(
-                    region=region,
-                    district=district,
+                    region_id=region.id if region else None,
+                    district_id=district.id if district else None,
                     level_type=level_type,
                     level_index=idx,
                     price=price

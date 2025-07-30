@@ -2,7 +2,7 @@ import datetime
 import json
 import logging
 import traceback
-from django.core.exceptions import ValidationError, PermissionDenied
+from django.core.exceptions import ValidationError, PermissionDenied, ObjectDoesNotExist
 from decimal import Decimal
 from django.contrib.auth.models import AnonymousUser
 from django.utils import timezone
@@ -75,7 +75,7 @@ def extract_ceilings(data):
 
 
 @transaction.atomic
-def create_or_update_product(user, data, is_duplicate=False):
+def create_or_update_product(user, data, is_duplicate=False, has_no_indigent=False):
     """
     Create or update a product with its related data in a single transaction.
 
@@ -214,14 +214,14 @@ def create_or_update_product(user, data, is_duplicate=False):
 
         # Start transaction for create path
         with transaction.atomic():
-            return _create_product_with_relations(user, product_data, is_duplicate)
+            return _create_product_with_relations(user, product_data, is_duplicate, has_no_indigent)
             
     except Exception as e:
         error_msg = f"Error in create_or_update_product: {str(e)}"
         logger.error(error_msg, exc_info=True)
         raise Exception(error_msg)
 
-def _create_product_with_relations(user, product_data, is_duplicate):
+def _create_product_with_relations(user, product_data, is_duplicate, has_no_indigent=False):
     """
     Helper function to create a product with its relations in a transaction.
     """
@@ -365,7 +365,7 @@ def _create_product_with_relations(user, product_data, is_duplicate):
                 
             raise Exception(f"Failed to create product: {error_msg}")
 
-def _process_membership_types(product, product_data):
+def _process_membership_types(product, product_data, has_no_indigent=False):
     """Process and create membership types for the product.
 
     Regardless of the input, this function will always create an additional
@@ -387,30 +387,66 @@ def _process_membership_types(product, product_data):
     # Collect new membership type objects to attach to the product
     membership_types: list[MembershipType] = []
 
-    # 1. Always create the default indigent membership type first
-    try:
-        indigent_defaults = {
-            'region': None,                # Optional for indigent
-            'district': None,
-            'level_type': 'urban',         # Arbitrary default. Business can adjust later.
-            'level_index': 1,
-            'price': 0,
-            'is_indigent': True,
-            'audit_user_id': audit_user_id,
-        }
-        valid_fields = {f.name for f in MembershipType._meta.get_fields() if f.concrete and not f.many_to_many and not f.one_to_many}
-        indigent_data = {k: v for k, v in indigent_defaults.items() if k in valid_fields}
-        membership_types.append(MembershipType.objects.create(**indigent_data))
-        logger.debug("Created default indigent membership type for product %s", product.id)
-    except Exception as e:
-        logger.error("Failed to create default indigent membership type: %s", e)
-        raise
+    # Define valid fields for MembershipType model
+    valid_fields = {f.name for f in MembershipType._meta.get_fields() if f.concrete and not f.many_to_many and not f.one_to_many}
+
+    # Location is now handled in the main mutation, so we need to fetch it again for processing
+    mt_data_input = product_data.get('membership_types', {})
+    if not isinstance(mt_data_input, dict):
+        mt_data_input = {}
+
+    # Fetch and validate Region and District from the input data
+    region_name = mt_data_input.get('region')
+    district_name = mt_data_input.get('district')
+    region, district = None, None
+    audit_user_id = getattr(product, 'audit_user_id', 1) or 1
+
+    if region_name:
+        # Use get_or_create to prevent errors from missing seed data
+        region, created = LocationModel.objects.get_or_create(
+            name=region_name,
+            type='R',
+            defaults={'code': region_name.upper(), 'audit_user_id': audit_user_id}
+        )
+        if created:
+            logger.info(f"Created new region: {region_name}")
+
+        if district_name:
+            # Use get_or_create for the district as well
+            district, created = LocationModel.objects.get_or_create(
+                name=district_name,
+                type='D',
+                parent=region,
+                defaults={'code': district_name.upper(), 'audit_user_id': audit_user_id}
+            )
+            if created:
+                logger.info(f"Created new district: {district_name} in region {region_name}")
+    mt_data_input = product_data.get('membership_types', {})
+
+    # 1. Create the default indigent membership type if required
+    if not has_no_indigent:
+        if not region:
+            raise ValidationError({'region': ['This field is required to create a default indigent membership type.']})
+        try:
+            indigent_defaults = {
+                'region_id': region.id if region else None,
+                'district_id': district.id if district else None,
+                'level_type': 'urban',         # Arbitrary default. Business can adjust later.
+                'level_index': 1,
+                'price': 0,
+                'is_indigent': True,
+                'audit_user_id': audit_user_id,
+            }
+            indigent_data = {k: v for k, v in indigent_defaults.items() if k in valid_fields}
+            membership_types.append(MembershipType.objects.create(**indigent_data))
+            logger.debug("Created default indigent membership type for product %s", product.id)
+        except Exception as e:
+            logger.error("Failed to create default indigent membership type: %s", e)
+            raise
 
     # 2. Process user-provided membership types (if any)
-    if membership_types_input and isinstance(membership_types_input, dict):
-        region = membership_types_input.get('region')
-        district = membership_types_input.get('district')
-        levels = membership_types_input.get('levels', {})
+    if mt_data_input and 'levels' in mt_data_input:
+        levels = mt_data_input.get('levels', {})
 
         try:
             # Create urban membership types
@@ -418,8 +454,8 @@ def _process_membership_types(product, product_data):
                 if price is None:
                     continue
                 mt_data = {
-                    'region': region,
-                    'district': district,
+                    'region_id': region.id if region else None,
+                    'district_id': district.id if district else None,
                     'level_type': 'urban',
                     'level_index': idx,
                     'price': price,
@@ -434,8 +470,8 @@ def _process_membership_types(product, product_data):
                 if price is None:
                     continue
                 mt_data = {
-                    'region': region,
-                    'district': district,
+                    'region_id': region.id if region else None,
+                    'district_id': district.id if district else None,
                     'level_type': 'rural',
                     'level_index': idx,
                     'price': price,
@@ -572,7 +608,8 @@ class CreateOrUpdateProductMutation(OpenIMISMutation):
 
         data["audit_user_id"] = user.id_for_audit
 
-        return create_or_update_product(user, data)
+        has_no_indigent = data.pop("has_no_indigent", False)
+        return create_or_update_product(user, data, has_no_indigent=has_no_indigent)
 
 
 class ProductServiceOrItemInput(graphene.InputObjectType):
@@ -701,6 +738,7 @@ class ProductInputType(OpenIMISMutation.Input):
     chf_id_format = graphene.Int(description="CHF ID format (1, 2 or 3)")
     membership_types = graphene.JSONString(required=False)
     card_replacement_fee = graphene.Decimal(max_digits=18, decimal_places=2, required=True, default_value=1)
+    has_no_indigent = graphene.Boolean(required=False, default_value=False)
 
 
 class CreateProductMutation(CreateOrUpdateProductMutation):
@@ -805,7 +843,8 @@ class DuplicateProductMutation(OpenIMISMutation):
         duplicate_items = True #if 'items' not in data else False
         duplicate_services = True #if 'services' not in data else False
 
-        new_product = create_or_update_product(user, data, is_duplicate=True)
+        has_no_indigent = data.pop("has_no_indigent", False)
+        new_product = create_or_update_product(user, data, is_duplicate=True, has_no_indigent=has_no_indigent)
 
         if duplicate_items:
             new_product_items = ProductItem.objects.filter(product=Product.objects.get(uuid=current_uuid,
@@ -919,18 +958,21 @@ class CreateProductCustomMutation(graphene.Mutation):
         membership_types = graphene.JSONString(required=False)
         age_maximal = graphene.Int(required=False)
         chf_id_format = graphene.Int(required=False)
-        # Add more fields as needed
+        enrolment_period_start_date = graphene.Date(required=False)
+        enrolment_period_end_date = graphene.Date(required=False)
+        has_no_indigent = graphene.Boolean(required=False, default_value=False)
 
     ok = graphene.Boolean()
     message = graphene.String()
     product = graphene.Field(lambda: __import__("product.schema", fromlist=["ProductGQLType"]).ProductGQLType)
 
     @classmethod
-    def mutate(cls, root, info, code, name, lump_sum, card_replacement_fee, premium_adult=None, membership_types=None, age_maximal=None, chf_id_format=None, **kwargs):
+    def mutate(cls, root, info, code, name, lump_sum, card_replacement_fee, premium_adult=None, membership_types=None, age_maximal=None, chf_id_format=None, enrolment_period_start_date=None, enrolment_period_end_date=None, has_no_indigent=False, **kwargs):
         from .schema import ProductGQLType
         try:
             user = getattr(info.context, 'user', None)
             audit_user_id = getattr(user, 'id_for_audit', None) or getattr(user, 'id', None) or 1
+
             # Parse membership_types if provided
             membership_types_data = None
             if membership_types:
@@ -944,6 +986,7 @@ class CreateProductCustomMutation(graphene.Mutation):
                         message="membership_types must be a JSON string or dict",
                         product=None
                     )
+
             product = Product.objects.create(
                 code=code,
                 name=name,
@@ -952,11 +995,18 @@ class CreateProductCustomMutation(graphene.Mutation):
                 premium_adult=premium_adult,
                 audit_user_id=audit_user_id,
                 age_maximal=age_maximal,
-                chf_id_format=chf_id_format
+                chf_id_format=chf_id_format,
+                enrolment_period_start_date=enrolment_period_start_date,
+                enrolment_period_end_date=enrolment_period_end_date
             )
+
             # Handle membership_types many-to-many
-            if membership_types_data:
-                _process_membership_types(product, {'membership_types': membership_types_data})
+            _process_membership_types(
+                product,
+                {'membership_types': membership_types_data if membership_types_data else {}},
+                has_no_indigent=has_no_indigent
+            )
+
             return CreateProductCustomMutation(
                 ok=True,
                 message="Product created successfully.",
