@@ -420,7 +420,6 @@ def _process_membership_types(product, product_data, has_no_indigent=False):
             )
             if created:
                 logger.info(f"Created new district: {district_name} in region {region_name}")
-    mt_data_input = product_data.get('membership_types', {})
 
     # 1. Create the default indigent membership type if required
     if not has_no_indigent:
