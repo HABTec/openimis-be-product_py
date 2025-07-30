@@ -635,10 +635,13 @@ class MembershipType(models.Model):
     level_type = models.CharField(max_length=10, choices=LEVEL_TYPE_CHOICES)
     level_index = models.PositiveIntegerField()  # 1-based index
     price = models.DecimalField(max_digits=10, decimal_places=2)
+    # Indicates whether this membership type is for indigent members. Defaults to False.
+    is_indigent = models.BooleanField(db_column="IsIndigent", default=False)
 
     def clean(self):
-        if not self.region:
-            raise ValidationError("region is required")
+        # Region is required for standard membership types but optional for indigent ones
+        if not self.region and not self.is_indigent:
+            raise ValidationError("region is required for non-indigent membership types")
         if self.level_type not in dict(self.LEVEL_TYPE_CHOICES):
             raise ValidationError("level_type must be 'urban' or 'rural'")
         if self.level_index < 1:

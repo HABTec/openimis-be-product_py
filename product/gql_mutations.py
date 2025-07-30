@@ -366,12 +366,100 @@ def _create_product_with_relations(user, product_data, is_duplicate):
             raise Exception(f"Failed to create product: {error_msg}")
 
 def _process_membership_types(product, product_data):
-    """Process and create membership types for the product."""
-    if 'membership_types' not in product_data or not product_data['membership_types']:
-        logger.info("No membership types provided")
-        return
+    """Process and create membership types for the product.
+
+    Regardless of the input, this function will always create an additional
+    default *indigent* `MembershipType` for the product with the following
+    attributes:
+        - is_indigent = True
+        - price = 0
+        - level_index = 1
+    This default membership type is appended **before** any user-provided
+    membership types, ensuring there is always at least one indigent level.
+    """
+    
+    # Extract raw input (may be None)
+    membership_types_input = product_data.get('membership_types')
+
+    # Ensure we have a valid audit user ID
+    audit_user_id = getattr(product, 'audit_user_id', 1) or 1
+
+    # Collect new membership type objects to attach to the product
+    membership_types: list[MembershipType] = []
+
+    # 1. Always create the default indigent membership type first
+    try:
+        indigent_defaults = {
+            'region': None,                # Optional for indigent
+            'district': None,
+            'level_type': 'urban',         # Arbitrary default. Business can adjust later.
+            'level_index': 1,
+            'price': 0,
+            'is_indigent': True,
+            'audit_user_id': audit_user_id,
+        }
+        valid_fields = {f.name for f in MembershipType._meta.get_fields() if f.concrete and not f.many_to_many and not f.one_to_many}
+        indigent_data = {k: v for k, v in indigent_defaults.items() if k in valid_fields}
+        membership_types.append(MembershipType.objects.create(**indigent_data))
+        logger.debug("Created default indigent membership type for product %s", product.id)
+    except Exception as e:
+        logger.error("Failed to create default indigent membership type: %s", e)
+        raise
+
+    # 2. Process user-provided membership types (if any)
+    if membership_types_input and isinstance(membership_types_input, dict):
+        region = membership_types_input.get('region')
+        district = membership_types_input.get('district')
+        levels = membership_types_input.get('levels', {})
+
+        try:
+            # Create urban membership types
+            for idx, price in enumerate(levels.get('urban', []), start=1):
+                if price is None:
+                    continue
+                mt_data = {
+                    'region': region,
+                    'district': district,
+                    'level_type': 'urban',
+                    'level_index': idx,
+                    'price': price,
+                    'is_indigent': False,
+                    'audit_user_id': audit_user_id,
+                }
+                filtered = {k: v for k, v in mt_data.items() if k in valid_fields}
+                membership_types.append(MembershipType.objects.create(**filtered))
+
+            # Create rural membership types
+            for idx, price in enumerate(levels.get('rural', []), start=1):
+                if price is None:
+                    continue
+                mt_data = {
+                    'region': region,
+                    'district': district,
+                    'level_type': 'rural',
+                    'level_index': idx,
+                    'price': price,
+                    'is_indigent': False,
+                    'audit_user_id': audit_user_id,
+                }
+                filtered = {k: v for k, v in mt_data.items() if k in valid_fields}
+                membership_types.append(MembershipType.objects.create(**filtered))
+        except Exception as e:
+            logger.error("Error creating provided membership types: %s", e)
+            raise
+    else:
+        if membership_types_input and not isinstance(membership_types_input, dict):
+            logger.warning("membership_types should be a dictionary if provided")
+        # No additional membership types supplied – only default indigent will exist
+
+    # 3. Attach new membership types to the product (replace existing)
+    with transaction.atomic():
+        product.membership_types.clear()
+        product.membership_types.add(*membership_types)
+        logger.info("Attached %s membership types (including default indigent) to product %s", len(membership_types), product.id)
+    return
         
-    membership_types_input = product_data['membership_types']
+    # ----- Legacy code below removed, superseded by improved logic above -----
     if not isinstance(membership_types_input, dict):
         logger.warning("membership_types should be a dictionary")
         return
