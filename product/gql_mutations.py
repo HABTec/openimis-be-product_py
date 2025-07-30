@@ -399,7 +399,6 @@ def _process_membership_types(product, product_data, has_no_indigent=False):
     region_name = mt_data_input.get('region')
     district_name = mt_data_input.get('district')
     region, district = None, None
-    audit_user_id = getattr(product, 'audit_user_id', 1) or 1
 
     if region_name:
         # Use get_or_create to prevent errors from missing seed data
