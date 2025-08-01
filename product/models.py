@@ -394,6 +394,24 @@ class Product(VersionedModel):
             or bool(self.start_cycle_4)
         )
 
+    def clean(self):
+        """Enforce one product per location (district and region)."""
+        if self.location_id:
+            # Check if there's another product with the same location
+            existing_products = Product.objects.filter(location_id=self.location_id)
+            
+            # Exclude self when updating
+            if self.id:
+                existing_products = existing_products.exclude(id=self.id)
+                
+            if existing_products.exists():
+                existing_product = existing_products.first()
+                raise ValidationError(f"Another product '{existing_product.name}' (code: {existing_product.code}) already exists for this location. Only one product per location is allowed.")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+
     class Meta:
         managed = True
         db_table = "tblProduct"
