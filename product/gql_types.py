@@ -5,15 +5,39 @@ from location.models import Location
 
 
 class RegionGQLType(DjangoObjectType):
+    type = graphene.String()
+    parent = graphene.Field(lambda: RegionGQLType)
+    
     class Meta:
         model = Location
         fields = ("id", "uuid", "code", "name")
+        
+    def resolve_type(self, info):
+        return self.type
+        
+    def resolve_parent(self, info):
+        # Handle null parent_id safely
+        if hasattr(self, 'parent_id') and self.parent_id:
+            return Location.objects.filter(id=self.parent_id).first()
+        return None
 
 
 class DistrictGQLType(DjangoObjectType):
+    parent = graphene.Field(lambda: RegionGQLType)
+    type = graphene.String()
+    
     class Meta:
         model = Location
         fields = ("id", "uuid", "code", "name")
+        
+    def resolve_parent(self, info):
+        # Handle null parent_id safely
+        if hasattr(self, 'parent_id') and self.parent_id:
+            return Location.objects.filter(id=self.parent_id).first()
+        return None
+        
+    def resolve_type(self, info):
+        return self.type
 
 
 class MembershipTypeGQLType(DjangoObjectType):
