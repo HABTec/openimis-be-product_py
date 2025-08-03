@@ -29,6 +29,12 @@ class CustomProductGQLType(DjangoObjectType):
             "enrolment_period_start_date",
             "enrolment_period_end_date",
             "chf_id_format",
+            "lump_sum",
+            "premium_adult",
+            "max_installments",
+            "registration_fee",
+            "age_maximal",
+            "card_replacement_fee",
         )
 
     def resolve_membership_types(self, info):
