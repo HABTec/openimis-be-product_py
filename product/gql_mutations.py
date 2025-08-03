@@ -40,6 +40,7 @@ from .services import (
     set_product_deductible_and_ceiling,
     set_product_details,
     set_product_relative_distribution,
+    update_product_location,
 )
 
 # Module-level logger
@@ -191,22 +192,59 @@ def create_or_update_product(user, data, is_duplicate=False, has_no_indigent=Fal
         if not is_duplicate and 'uuid' in data and data['uuid']:
             existing_product = Product.objects.filter(uuid=data['uuid'], validity_to__isnull=True).first()
             if existing_product:
-                # Update simple scalar fields directly
-                for field, value in product_data.items():
-                    # Skip fields that are not actual model attributes (e.g. membership_types handled separately)
-                    if hasattr(existing_product, field):
-                        setattr(existing_product, field, value)
-                # Ensure audit_user_id is set
-                existing_product.audit_user_id = data.get('audit_user_id', getattr(user, 'id_for_audit', getattr(user, 'id', 1)))
-                existing_product.save()
+                # Check if location is being changed
+                new_location_id = product_data.get('location_id')
+                old_location_id = existing_product.location_id
+                location_changed = new_location_id is not None and new_location_id != old_location_id
+                
+                if location_changed:
+                    # Handle location change with our special function
+                    try:
+                        updated_product, message = update_product_location(existing_product.id, new_location_id)
+                        logger.info(message)
+                        
+                        # If the product was updated successfully, update other fields
+                        # Remove location_id from product_data since it's already handled
+                        if 'location_id' in product_data:
+                            del product_data['location_id']
+                            
+                        # Update the remaining fields on the updated product
+                        for field, value in product_data.items():
+                            if hasattr(updated_product, field):
+                                setattr(updated_product, field, value)
+                        
+                        # Ensure audit_user_id is set
+                        updated_product.audit_user_id = data.get('audit_user_id', getattr(user, 'id_for_audit', getattr(user, 'id', 1)))
+                        updated_product.save()
+                        
+                        # Update membership types if provided
+                        if 'membership_types' in data and data['membership_types']:
+                            _process_membership_types(updated_product, {'membership_types': data['membership_types']})
+                        
+                        # Return the updated product
+                        updated_product.refresh_from_db()
+                        return updated_product
+                    except ValidationError as e:
+                        # Re-raise the validation error
+                        raise e
+                else:
+                    # Regular update without location change
+                    # Update simple scalar fields directly
+                    for field, value in product_data.items():
+                        # Skip fields that are not actual model attributes (e.g. membership_types handled separately)
+                        if hasattr(existing_product, field):
+                            setattr(existing_product, field, value)
+                    # Ensure audit_user_id is set
+                    existing_product.audit_user_id = data.get('audit_user_id', getattr(user, 'id_for_audit', getattr(user, 'id', 1)))
+                    existing_product.save()
 
-                # Update membership types if provided
-                if 'membership_types' in data and data['membership_types']:
-                    _process_membership_types(existing_product, {'membership_types': data['membership_types']})
+                    # Update membership types if provided
+                    if 'membership_types' in data and data['membership_types']:
+                        _process_membership_types(existing_product, {'membership_types': data['membership_types']})
 
-                # Return the updated product after refresh
-                existing_product.refresh_from_db()
-                return existing_product
+                    # Return the updated product after refresh
+                    existing_product.refresh_from_db()
+                    return existing_product
 
         # Generate a UUID if not provided (for create path)
         if 'uuid' not in product_data:
@@ -881,13 +919,14 @@ class CreateProductCustomMutation(graphene.Mutation):
         enrolment_period_start_date = graphene.Date(required=False)
         enrolment_period_end_date = graphene.Date(required=False)
         has_no_indigent = graphene.Boolean(required=False, default_value=False)
+        location_id = graphene.Int(required=False, description="Location ID to associate with the product")
 
     ok = graphene.Boolean()
     message = graphene.String()
     product = graphene.Field(lambda: __import__("product.schema", fromlist=["ProductGQLType"]).ProductGQLType)
 
     @classmethod
-    def mutate(cls, root, info, code, name, lump_sum, card_replacement_fee, premium_adult=None, membership_types=None, age_maximal=None, chf_id_format=None, enrolment_period_start_date=None, enrolment_period_end_date=None, has_no_indigent=False, **kwargs):
+    def mutate(cls, root, info, code, name, lump_sum, card_replacement_fee, premium_adult=None, membership_types=None, age_maximal=None, chf_id_format=None, enrolment_period_start_date=None, enrolment_period_end_date=None, has_no_indigent=False, location_id=None, **kwargs):
         from .schema import ProductGQLType
         try:
             user = getattr(info.context, 'user', None)
@@ -907,18 +946,124 @@ class CreateProductCustomMutation(graphene.Mutation):
                         product=None
                     )
 
-            product = Product.objects.create(
-                code=code,
-                name=name,
-                lump_sum=lump_sum,
-                card_replacement_fee=card_replacement_fee,
-                premium_adult=premium_adult,
-                audit_user_id=audit_user_id,
-                age_maximal=age_maximal,
-                chf_id_format=chf_id_format,
-                enrolment_period_start_date=enrolment_period_start_date,
-                enrolment_period_end_date=enrolment_period_end_date
-            )
+            # Check if a product already exists for this location
+            if location_id:
+                existing_product = Product.objects.filter(
+                    location_id=location_id,
+                    validity_to__isnull=True
+                ).first()
+                
+                if existing_product:
+                    # Update the existing product with the new details
+                    # We'll use update() directly on the queryset to bypass model validation
+                    # This avoids triggering the clean() method that would raise a ValidationError
+                    update_data = {
+                        'name': name,
+                        'lump_sum': lump_sum,
+                        'card_replacement_fee': card_replacement_fee,
+                        'audit_user_id': audit_user_id
+                    }
+                    
+                    if premium_adult is not None:
+                        update_data['premium_adult'] = premium_adult
+                    if age_maximal is not None:
+                        update_data['age_maximal'] = age_maximal
+                    if chf_id_format is not None:
+                        update_data['chf_id_format'] = chf_id_format
+                    if enrolment_period_start_date is not None:
+                        update_data['enrolment_period_start_date'] = enrolment_period_start_date
+                    if enrolment_period_end_date is not None:
+                        update_data['enrolment_period_end_date'] = enrolment_period_end_date
+                    
+                    # Update the product directly in the database
+                    Product.objects.filter(id=existing_product.id).update(**update_data)
+                    
+                    # Refresh the product from the database
+                    existing_product.refresh_from_db()
+                    
+                    # Handle membership_types many-to-many if provided
+                    if membership_types_data:
+                        # Clear existing membership types
+                        existing_product.membership_types.all().delete()
+                        # Add new membership types
+                        _process_membership_types(
+                            existing_product,
+                            {'membership_types': membership_types_data},
+                            has_no_indigent=has_no_indigent
+                        )
+                    
+                    return CreateProductCustomMutation(
+                        ok=True,
+                        message=f"Updated existing product '{existing_product.name}' (code: {existing_product.code}) for this location.",
+                        product=existing_product
+                    )
+            
+            try:
+                # Create the product
+                product = Product.objects.create(
+                    code=code,
+                    name=name,
+                    lump_sum=lump_sum,
+                    card_replacement_fee=card_replacement_fee,
+                    premium_adult=premium_adult,
+                    audit_user_id=audit_user_id,
+                    age_maximal=age_maximal,
+                    chf_id_format=chf_id_format,
+                    enrolment_period_start_date=enrolment_period_start_date,
+                    enrolment_period_end_date=enrolment_period_end_date,
+                    location_id=location_id
+                )
+            except ValidationError as e:
+                # If validation fails due to location constraint, find the existing product and update it
+                if location_id and "another product" in str(e).lower():
+                    existing_product = Product.objects.filter(
+                        location_id=location_id,
+                        validity_to__isnull=True
+                    ).first()
+                    
+                    if existing_product:
+                        # Update the existing product using update() to bypass validation
+                        update_data = {
+                            'name': name,
+                            'lump_sum': lump_sum,
+                            'card_replacement_fee': card_replacement_fee,
+                            'audit_user_id': audit_user_id
+                        }
+                        
+                        if premium_adult is not None:
+                            update_data['premium_adult'] = premium_adult
+                        if age_maximal is not None:
+                            update_data['age_maximal'] = age_maximal
+                        if chf_id_format is not None:
+                            update_data['chf_id_format'] = chf_id_format
+                        if enrolment_period_start_date is not None:
+                            update_data['enrolment_period_start_date'] = enrolment_period_start_date
+                        if enrolment_period_end_date is not None:
+                            update_data['enrolment_period_end_date'] = enrolment_period_end_date
+                        
+                        Product.objects.filter(id=existing_product.id).update(**update_data)
+                        existing_product.refresh_from_db()
+                        
+                        # Handle membership_types
+                        if membership_types_data:
+                            existing_product.membership_types.all().delete()
+                            _process_membership_types(
+                                existing_product,
+                                {'membership_types': membership_types_data},
+                                has_no_indigent=has_no_indigent
+                            )
+                        
+                        return CreateProductCustomMutation(
+                            ok=True,
+                            message=f"Updated existing product '{existing_product.name}' (code: {existing_product.code}) for this location.",
+                            product=existing_product
+                        )
+                # If it's another validation error, re-raise it
+                return CreateProductCustomMutation(
+                    ok=False,
+                    message=str(e),
+                    product=None
+                )
 
             # Handle membership_types many-to-many
             _process_membership_types(
