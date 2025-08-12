@@ -115,7 +115,8 @@ class CustomIUserGQLType(DjangoObjectType):
         if getattr(self, "user_roles", None):
             return Role.objects \
                 .filter(validity_to__isnull=True) \
-                .filter(user_roles__user_id=self.id, user_roles__validity_to__isnull=True)
+                .filter(user_roles__user_id=self.id, user_roles__validity_to__isnull=True) \
+                .prefetch_related('user_roles')
         return None
 
     def resolve_userdistrictSet(self, info, **kwargs):
