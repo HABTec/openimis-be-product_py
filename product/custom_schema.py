@@ -121,7 +121,9 @@ class CustomIUserGQLType(DjangoObjectType):
     def resolve_userdistrictSet(self, info, **kwargs):
         # Lazy import to avoid cross-app hard dependency
         UserDistrict = apps.get_model("location", "UserDistrict")
-        if not UserDistrict:
+        try:
+            UserDistrict = apps.get_model("location", "UserDistrict")
+        except LookupError:
             return []
         qs = UserDistrict.objects.filter(user_id=self.id, validity_to__isnull=True).select_related("location", "location__parent")
         # Map to lightweight GQL types (prefixed to avoid name collisions)
