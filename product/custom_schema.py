@@ -117,7 +117,11 @@ class CustomIUserGQLType(DjangoObjectType):
                 .filter(validity_to__isnull=True) \
                 .filter(user_roles__user_id=self.id, user_roles__validity_to__isnull=True) \
                 .prefetch_related('user_roles')
-        return None
+        # Check if there are any active roles linked via the M2M-through user_roles
+        roles_qs = Role.objects \
+            .filter(validity_to__isnull=True) \
+            .filter(user_roles__user_id=self.id, user_roles__validity_to__isnull=True)
+        return list(roles_qs) if roles_qs.exists() else None
 
     def resolve_userdistrictSet(self, info, **kwargs):
         # Lazy import to avoid cross-app hard dependency
