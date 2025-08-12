@@ -130,7 +130,7 @@ class CustomIUserGQLType(DjangoObjectType):
             UserDistrict = apps.get_model("location", "UserDistrict")
         except LookupError:
             return []
-        qs = UserDistrict.objects.filter(user_id=self.id, validity_to__isnull=True).select_related("location", "location__parent")
+        qs = UserDistrict.objects.filter(user_id=self.id, validity_to__isnull=True).select_related("location")
         # Map to lightweight GQL types (prefixed to avoid name collisions)
         result = []
         for ud in qs:
