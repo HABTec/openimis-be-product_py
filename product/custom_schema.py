@@ -50,6 +50,9 @@ class ProductLanguageGQLType(graphene.ObjectType):
 
 
 class ProductLocationTinyGQLType(graphene.ObjectType):
+    id = graphene.ID()
+    uuid = graphene.String()
+    code = graphene.String()
     name = graphene.String()
     parent = graphene.Field(lambda: ProductLocationTinyGQLType)
 
@@ -61,9 +64,16 @@ class ProductUserDistrictGQLType(graphene.ObjectType):
 class CustomIUserGQLType(DjangoObjectType):
     # Return full language object to allow sub-selection (e.g., language { name })
     language = graphene.Field(ProductLanguageGQLType)
+    # Backward-compatible scalar languageId for clients expecting it
+    languageId = graphene.String()
     # Expose additional contact fields
     phone = graphene.String()
     email = graphene.String()
+    # Validity dates to match common API expectations
+    validityFrom = graphene.DateTime()
+    validityTo = graphene.DateTime()
+    # Expose full health facility object (if available in environment)
+    healthFacility = graphene.Field(lambda: __import__("location.gql_queries", fromlist=["HealthFacilityGQLType"]).HealthFacilityGQLType)
 
     class Meta:
         model = InteractiveUser
@@ -91,6 +101,13 @@ class CustomIUserGQLType(DjangoObjectType):
             return None
         return ProductLanguageGQLType(code=self.language.code, name=self.language.name)
 
+    def resolve_languageId(self, info):
+        # Mirror of core.InteractiveUserGQLType language_id
+        try:
+            return getattr(self, "language_id", None)
+        except Exception:
+            return None
+
     def resolve_products(self, info):
         # This placeholder logic returns all valid products.
         # You may need to adjust this to fetch products specifically associated with the user.
@@ -106,6 +123,12 @@ class CustomIUserGQLType(DjangoObjectType):
         if self.health_facility and self.health_facility.location:
             return self.health_facility.location.name
         return None
+
+    def resolve_validityFrom(self, info):
+        return getattr(self, "validity_from", None)
+
+    def resolve_validityTo(self, info):
+        return getattr(self, "validity_to", None)
 
     def resolve_roles(self, info, **kwargs):
         from django.utils.translation import gettext as _
@@ -123,6 +146,32 @@ class CustomIUserGQLType(DjangoObjectType):
             .filter(user_roles__user_id=self.id, user_roles__validity_to__isnull=True)
         return list(roles_qs) if roles_qs.exists() else None
 
+    def resolve_healthFacility(self, info, **kwargs):
+        # Mirror behavior from core.InteractiveUserGQLType
+        try:
+            from core.apps import CoreConfig
+            from django.core.exceptions import PermissionDenied
+            from django.utils.translation import gettext as _
+            if not info.context.user.has_perms(CoreConfig.gql_query_users_perms):
+                raise PermissionDenied(_("unauthorized"))
+        except Exception:
+            # If no permissions system available in this context, fall back silently
+            pass
+        try:
+            HealthFacility = apps.get_model("location", "HealthFacility")
+        except LookupError:
+            return None
+        if getattr(self, "health_facility_id", None):
+            # Try to use model-level get_queryset if available to enforce permissions
+            try:
+                get_qs = getattr(HealthFacility, "get_queryset", None)
+                if callable(get_qs):
+                    return get_qs(None, info).filter(pk=self.health_facility_id).first()
+            except Exception:
+                pass
+            return HealthFacility.objects.filter(pk=self.health_facility_id).first()
+        return None
+
     def resolve_userdistrictSet(self, info, **kwargs):
         # Lazy import to avoid cross-app hard dependency
         UserDistrict = apps.get_model("location", "UserDistrict")
@@ -139,8 +188,24 @@ class CustomIUserGQLType(DjangoObjectType):
                 continue
             parent = None
             if loc.parent:
-                parent = ProductLocationTinyGQLType(name=loc.parent.name, parent=None)
-            result.append(ProductUserDistrictGQLType(location=ProductLocationTinyGQLType(name=loc.name, parent=parent)))
+                parent = ProductLocationTinyGQLType(
+                    id=str(loc.parent.id) if getattr(loc.parent, "id", None) is not None else None,
+                    uuid=getattr(loc.parent, "uuid", None),
+                    code=getattr(loc.parent, "code", None),
+                    name=loc.parent.name,
+                    parent=None,
+                )
+            result.append(
+                ProductUserDistrictGQLType(
+                    location=ProductLocationTinyGQLType(
+                        id=str(loc.id) if getattr(loc, "id", None) is not None else None,
+                        uuid=getattr(loc, "uuid", None),
+                        code=getattr(loc, "code", None),
+                        name=loc.name,
+                        parent=parent,
+                    )
+                )
+            )
         return result
 
 
