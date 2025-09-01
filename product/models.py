@@ -371,6 +371,8 @@ class Product(VersionedModel):
     )
     enrolment_period_start_date = models.DateField(blank=True, null=True)
     enrolment_period_end_date = models.DateField(blank=True, null=True)
+    coverage_period_start_date = models.DateField(blank=True, null=True)
+    coverage_period_end_date = models.DateField(blank=True, null=True)
     membership_types = models.ManyToManyField(
         'MembershipType',
         blank=True,

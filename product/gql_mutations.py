@@ -172,7 +172,7 @@ def create_or_update_product(user, data, is_duplicate=False, has_no_indigent=Fal
         # Define all possible product fields
         product_fields = [
             'code', 'name', 'lump_sum', 'card_replacement_fee', 'audit_user_id', 'enrolment_period_start_date',
-            'enrolment_period_end_date', 'administration_period', 'recurrence', 'location_id',
+            'enrolment_period_end_date', 'coverage_period_start_date', 'coverage_period_end_date', 'administration_period', 'recurrence', 'location_id',
             'conversion_product_id', 'acc_code_remuneration', 'acc_code_premiums', 'premium_adult',
             'threshold', 'share_contribution', 'registration_lump_sum', 'registration_fee',
             'start_cycle_1', 'start_cycle_2', 'start_cycle_3', 'start_cycle_4', 'ceiling_interpretation',
@@ -297,6 +297,8 @@ def _create_product_with_relations(user, product_data, is_duplicate, has_no_indi
                 # Optional fields with defaults
                 'enrolment_period_start_date': product_data.get('enrolment_period_start_date'),
                 'enrolment_period_end_date': product_data.get('enrolment_period_end_date'),
+                'coverage_period_start_date': product_data.get('coverage_period_start_date'),
+                'coverage_period_end_date': product_data.get('coverage_period_end_date'),
                 'administration_period': product_data.get('administration_period'),
                 'recurrence': product_data.get('recurrence'),
                 'conversion_product_id': product_data.get('conversion_product_id'),
@@ -613,6 +615,8 @@ class ProductInputType(OpenIMISMutation.Input):
     name = graphene.String(required=True)
     enrolment_period_start_date = graphene.Date(required=False)
     enrolment_period_end_date = graphene.Date(required=False)
+    coverage_period_start_date = graphene.Date(required=False)
+    coverage_period_end_date = graphene.Date(required=False)
     administration_period = graphene.Int()
     recurrence = graphene.Int()
     location_uuid = graphene.UUID()
@@ -918,6 +922,8 @@ class CreateProductCustomMutation(graphene.Mutation):
         chf_id_format = graphene.Int(required=False)
         enrolment_period_start_date = graphene.Date(required=False)
         enrolment_period_end_date = graphene.Date(required=False)
+        coverage_period_start_date = graphene.Date(required=False)
+        coverage_period_end_date = graphene.Date(required=False)
         has_no_indigent = graphene.Boolean(required=False, default_value=False)
         location_id = graphene.Int(required=False, description="Location ID to associate with the product")
 
@@ -926,7 +932,7 @@ class CreateProductCustomMutation(graphene.Mutation):
     product = graphene.Field(lambda: __import__("product.schema", fromlist=["ProductGQLType"]).ProductGQLType)
 
     @classmethod
-    def mutate(cls, root, info, code, name, lump_sum, card_replacement_fee, premium_adult=None, membership_types=None, age_maximal=None, chf_id_format=None, enrolment_period_start_date=None, enrolment_period_end_date=None, has_no_indigent=False, location_id=None, **kwargs):
+    def mutate(cls, root, info, code, name, lump_sum, card_replacement_fee, premium_adult=None, membership_types=None, age_maximal=None, chf_id_format=None, enrolment_period_start_date=None, enrolment_period_end_date=None, coverage_period_start_date=None, coverage_period_end_date=None, has_no_indigent=False, location_id=None, **kwargs):
         from .schema import ProductGQLType
         try:
             user = getattr(info.context, 'user', None)
@@ -974,6 +980,10 @@ class CreateProductCustomMutation(graphene.Mutation):
                         update_data['enrolment_period_start_date'] = enrolment_period_start_date
                     if enrolment_period_end_date is not None:
                         update_data['enrolment_period_end_date'] = enrolment_period_end_date
+                    if coverage_period_start_date is not None:
+                        update_data['coverage_period_start_date'] = coverage_period_start_date
+                    if coverage_period_end_date is not None:
+                        update_data['coverage_period_end_date'] = coverage_period_end_date
                     
                     # Update the product directly in the database
                     Product.objects.filter(id=existing_product.id).update(**update_data)
@@ -983,8 +993,8 @@ class CreateProductCustomMutation(graphene.Mutation):
                     
                     # Handle membership_types many-to-many if provided
                     if membership_types_data:
-                        # Clear existing membership types
-                        existing_product.membership_types.all().delete()
+                        # Clear existing M2M relations without deleting MembershipType rows
+                        existing_product.membership_types.clear()
                         # Add new membership types
                         _process_membership_types(
                             existing_product,
@@ -1011,6 +1021,8 @@ class CreateProductCustomMutation(graphene.Mutation):
                     chf_id_format=chf_id_format,
                     enrolment_period_start_date=enrolment_period_start_date,
                     enrolment_period_end_date=enrolment_period_end_date,
+                    coverage_period_start_date=coverage_period_start_date,
+                    coverage_period_end_date=coverage_period_end_date,
                     location_id=location_id
                 )
             except ValidationError as e:
@@ -1040,13 +1052,18 @@ class CreateProductCustomMutation(graphene.Mutation):
                             update_data['enrolment_period_start_date'] = enrolment_period_start_date
                         if enrolment_period_end_date is not None:
                             update_data['enrolment_period_end_date'] = enrolment_period_end_date
+                        if coverage_period_start_date is not None:
+                            update_data['coverage_period_start_date'] = coverage_period_start_date
+                        if coverage_period_end_date is not None:
+                            update_data['coverage_period_end_date'] = coverage_period_end_date
                         
                         Product.objects.filter(id=existing_product.id).update(**update_data)
                         existing_product.refresh_from_db()
                         
                         # Handle membership_types
                         if membership_types_data:
-                            existing_product.membership_types.all().delete()
+                            # Clear existing M2M relations without deleting MembershipType rows
+                            existing_product.membership_types.clear()
                             _process_membership_types(
                                 existing_product,
                                 {'membership_types': membership_types_data},
