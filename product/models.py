@@ -29,7 +29,9 @@ class Product(VersionedModel):
     administration_period = models.IntegerField(
         db_column="AdministrationPeriod", blank=True, null=True
     )
-    lump_sum = models.DecimalField(db_column="LumpSum", max_digits=18, decimal_places=2)
+    lump_sum = models.DecimalField(
+        db_column="LumpSum", max_digits=18, decimal_places=2, blank=True, null=True
+    )
     threshold = models.IntegerField(db_column="Threshold", blank=True, null=True)
     recurrence = models.IntegerField(db_column="Recurrence", blank=True, null=True)
     premium_adult = models.DecimalField(
@@ -130,6 +132,20 @@ class Product(VersionedModel):
     )
     registration_fee = models.DecimalField(
         db_column="RegistrationFee",
+        max_digits=18,
+        decimal_places=2,
+        blank=True,
+        null=True,
+    )
+    additional_spouse_contribution = models.DecimalField(
+        db_column="AdditionalSpouseContribution",
+        max_digits=18,
+        decimal_places=2,
+        blank=True,
+        null=True,
+    )
+    penalty_price = models.DecimalField(
+        db_column="PenaltyPrice",
         max_digits=18,
         decimal_places=2,
         blank=True,
