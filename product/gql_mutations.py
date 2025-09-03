@@ -119,8 +119,8 @@ def create_or_update_product(user, data, is_duplicate=False, has_no_indigent=Fal
             if data['chf_id_format'] not in (1, 2, 3):
                 raise ValueError('chf_id_format must be 1, 2, or 3')
 
-        # Validate required fields
-        required_fields = ['code', 'name', 'lump_sum', 'card_replacement_fee']
+        # Validate required fields (lump_sum is now optional)
+        required_fields = ['code', 'name', 'card_replacement_fee']
         missing = [f for f in required_fields if not data.get(f)]
         if missing:
             raise ValueError(f"Missing required fields: {', '.join(missing)}")
@@ -175,6 +175,7 @@ def create_or_update_product(user, data, is_duplicate=False, has_no_indigent=Fal
             'enrolment_period_end_date', 'coverage_period_start_date', 'coverage_period_end_date', 'administration_period', 'recurrence', 'location_id',
             'conversion_product_id', 'acc_code_remuneration', 'acc_code_premiums', 'premium_adult',
             'threshold', 'share_contribution', 'registration_lump_sum', 'registration_fee',
+            'additional_spouse_contribution', 'penalty_price',
             'start_cycle_1', 'start_cycle_2', 'start_cycle_3', 'start_cycle_4', 'ceiling_interpretation',
             'ceiling_type', 'ded_insuree', 'ded_ip_insuree', 'ded_op_insuree', 'max_insuree', 'max_ip_insuree',
             'max_op_insuree', 'max_ceiling_policy', 'max_ceiling_policy_ip', 'max_ceiling_policy_op',
@@ -285,7 +286,8 @@ def _create_product_with_relations(user, product_data, is_duplicate, has_no_indi
             product_fields = {
                 'code': product_data['code'],
                 'name': product_data['name'],
-                'lump_sum': product_data.get('lump_sum', 0),
+                # lump_sum is optional; do not default to 0 when not provided
+                'lump_sum': product_data.get('lump_sum'),
                 'card_replacement_fee': product_data.get('card_replacement_fee', 1),
                 'period_rel_prices': 'F',
                 'period_rel_prices_op': 'F',
@@ -306,6 +308,8 @@ def _create_product_with_relations(user, product_data, is_duplicate, has_no_indi
                 'share_contribution': product_data.get('share_contribution'),
                 'registration_lump_sum': product_data.get('registration_lump_sum'),
                 'registration_fee': product_data.get('registration_fee'),
+                'additional_spouse_contribution': product_data.get('additional_spouse_contribution'),
+                'penalty_price': product_data.get('penalty_price'),
                 'start_cycle_1': product_data.get('start_cycle_1'),
                 'start_cycle_2': product_data.get('start_cycle_2'),
                 'start_cycle_3': product_data.get('start_cycle_3'),
@@ -624,7 +628,7 @@ class ProductInputType(OpenIMISMutation.Input):
     acc_code_remuneration = graphene.String()
     acc_code_premiums = graphene.String()
     lump_sum = graphene.Decimal(
-        max_digits=18, decimal_places=2, required=False, default_value=0
+        max_digits=18, decimal_places=2, required=False
     )
     premium_adult = graphene.Decimal(
         max_digits=18, decimal_places=2, required=False, default_value=0
@@ -638,6 +642,12 @@ class ProductInputType(OpenIMISMutation.Input):
     )
     registration_fee = graphene.Decimal(
         max_digits=18, decimal_places=2, required=False)
+    additional_spouse_contribution = graphene.Decimal(
+        max_digits=18, decimal_places=2, required=False
+    )
+    penalty_price = graphene.Decimal(
+        max_digits=18, decimal_places=2, required=False
+    )
     start_cycle_1 = graphene.String()
     start_cycle_2 = graphene.String()
     start_cycle_3 = graphene.String()
@@ -914,9 +924,11 @@ class CreateProductCustomMutation(graphene.Mutation):
     class Arguments:
         code = graphene.String(required=True)
         name = graphene.String(required=True)
-        lump_sum = graphene.Decimal(required=True)
+        lump_sum = graphene.Decimal(required=False)
         card_replacement_fee = graphene.Decimal(required=True)
         premium_adult = graphene.Decimal(required=False)
+        additional_spouse_contribution = graphene.Decimal(required=False)
+        penalty_price = graphene.Decimal(required=False)
         membership_types = graphene.JSONString(required=False)
         age_maximal = graphene.Int(required=False)
         chf_id_format = graphene.Int(required=False)
@@ -932,7 +944,7 @@ class CreateProductCustomMutation(graphene.Mutation):
     product = graphene.Field(lambda: __import__("product.schema", fromlist=["ProductGQLType"]).ProductGQLType)
 
     @classmethod
-    def mutate(cls, root, info, code, name, lump_sum, card_replacement_fee, premium_adult=None, membership_types=None, age_maximal=None, chf_id_format=None, enrolment_period_start_date=None, enrolment_period_end_date=None, coverage_period_start_date=None, coverage_period_end_date=None, has_no_indigent=False, location_id=None, **kwargs):
+    def mutate(cls, root, info, code, name, card_replacement_fee, lump_sum=None, premium_adult=None, additional_spouse_contribution=None, penalty_price=None, membership_types=None, age_maximal=None, chf_id_format=None, enrolment_period_start_date=None, enrolment_period_end_date=None, coverage_period_start_date=None, coverage_period_end_date=None, has_no_indigent=False, location_id=None, **kwargs):
         from .schema import ProductGQLType
         try:
             user = getattr(info.context, 'user', None)
@@ -965,13 +977,18 @@ class CreateProductCustomMutation(graphene.Mutation):
                     # This avoids triggering the clean() method that would raise a ValidationError
                     update_data = {
                         'name': name,
-                        'lump_sum': lump_sum,
                         'card_replacement_fee': card_replacement_fee,
                         'audit_user_id': audit_user_id
                     }
+                    if lump_sum is not None:
+                        update_data['lump_sum'] = lump_sum
                     
                     if premium_adult is not None:
                         update_data['premium_adult'] = premium_adult
+                    if additional_spouse_contribution is not None:
+                        update_data['additional_spouse_contribution'] = additional_spouse_contribution
+                    if penalty_price is not None:
+                        update_data['penalty_price'] = penalty_price
                     if age_maximal is not None:
                         update_data['age_maximal'] = age_maximal
                     if chf_id_format is not None:
@@ -1016,6 +1033,8 @@ class CreateProductCustomMutation(graphene.Mutation):
                     lump_sum=lump_sum,
                     card_replacement_fee=card_replacement_fee,
                     premium_adult=premium_adult,
+                    additional_spouse_contribution=additional_spouse_contribution,
+                    penalty_price=penalty_price,
                     audit_user_id=audit_user_id,
                     age_maximal=age_maximal,
                     chf_id_format=chf_id_format,
@@ -1037,13 +1056,18 @@ class CreateProductCustomMutation(graphene.Mutation):
                         # Update the existing product using update() to bypass validation
                         update_data = {
                             'name': name,
-                            'lump_sum': lump_sum,
                             'card_replacement_fee': card_replacement_fee,
                             'audit_user_id': audit_user_id
                         }
+                        if lump_sum is not None:
+                            update_data['lump_sum'] = lump_sum
                         
                         if premium_adult is not None:
                             update_data['premium_adult'] = premium_adult
+                        if additional_spouse_contribution is not None:
+                            update_data['additional_spouse_contribution'] = additional_spouse_contribution
+                        if penalty_price is not None:
+                            update_data['penalty_price'] = penalty_price
                         if age_maximal is not None:
                             update_data['age_maximal'] = age_maximal
                         if chf_id_format is not None:
