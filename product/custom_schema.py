@@ -33,7 +33,6 @@ class CustomProductGQLType(DjangoObjectType):
             "chf_id_format",
             "lump_sum",
             "premium_adult",
-            "max_installments",
             "registration_fee",
             "age_maximal",
             "card_replacement_fee",
