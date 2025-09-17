@@ -920,35 +920,61 @@ def get_product_gqltype():
     from .schema import ProductGQLType
     return ProductGQLType
 
-class CreateProductCustomMutation(graphene.Mutation):
-    class Arguments:
-        code = graphene.String(required=True)
-        name = graphene.String(required=True)
-        lump_sum = graphene.Decimal(required=False)
-        card_replacement_fee = graphene.Decimal(required=True)
-        premium_adult = graphene.Decimal(required=False)
-        additional_spouse_contribution = graphene.Decimal(required=False)
-        penalty_price = graphene.Decimal(required=False)
-        membership_types = graphene.JSONString(required=False)
-        age_maximal = graphene.Int(required=False)
-        chf_id_format = graphene.Int(required=False)
-        enrolment_period_start_date = graphene.Date(required=False)
-        enrolment_period_end_date = graphene.Date(required=False)
-        coverage_period_start_date = graphene.Date(required=False)
-        coverage_period_end_date = graphene.Date(required=False)
-        has_no_indigent = graphene.Boolean(required=False, default_value=False)
-        location_id = graphene.Int(required=False, description="Location ID to associate with the product")
 
+class CreateProductInput(graphene.InputObjectType):
+    code = graphene.String(required=True)
+    name = graphene.String(required=True)
+    lump_sum = graphene.Decimal(required=False)
+    card_replacement_fee = graphene.Decimal(required=True)
+    premium_adult = graphene.Decimal(required=False)
+    additional_spouse_contribution = graphene.Decimal(required=False)
+    penalty_price = graphene.Decimal(required=False)
+    membership_types = graphene.JSONString(required=False)
+    age_maximal = graphene.Int(required=False)
+    chf_id_format = graphene.Int(required=False)
+    enrolment_period_start_date = graphene.Date(required=False)
+    enrolment_period_end_date = graphene.Date(required=False)
+    coverage_period_start_date = graphene.Date(required=False)
+    coverage_period_end_date = graphene.Date(required=False)
+    has_no_indigent = graphene.Boolean(required=False, default_value=False)
+    location_id = graphene.Int(required=False, description="Location ID to associate with the product")
+    client_mutation_id = graphene.String(required=False)
+    client_mutation_label = graphene.String(required=False)
+
+
+class CreateProductCustomMutation(graphene.Mutation):
+    
+  
+    class Arguments:
+        input = CreateProductInput(required=True)
     ok = graphene.Boolean()
     message = graphene.String()
     product = graphene.Field(lambda: __import__("product.schema", fromlist=["ProductGQLType"]).ProductGQLType)
 
     @classmethod
-    def mutate(cls, root, info, code, name, card_replacement_fee, lump_sum=None, premium_adult=None, additional_spouse_contribution=None, penalty_price=None, membership_types=None, age_maximal=None, chf_id_format=None, enrolment_period_start_date=None, enrolment_period_end_date=None, coverage_period_start_date=None, coverage_period_end_date=None, has_no_indigent=False, location_id=None, **kwargs):
+    def mutate(cls, root, info, input):
         from .schema import ProductGQLType
         try:
             user = getattr(info.context, 'user', None)
             audit_user_id = getattr(user, 'id_for_audit', None) or getattr(user, 'id', None) or 1
+
+            # Extract all fields from input
+            code = input.code
+            name = input.name
+            card_replacement_fee = input.card_replacement_fee
+            lump_sum = input.lump_sum
+            premium_adult = input.premium_adult
+            additional_spouse_contribution = input.additional_spouse_contribution
+            penalty_price = input.penalty_price
+            membership_types = input.membership_types
+            age_maximal = input.age_maximal
+            chf_id_format = input.chf_id_format
+            enrolment_period_start_date = input.enrolment_period_start_date
+            enrolment_period_end_date = input.enrolment_period_end_date
+            coverage_period_start_date = input.coverage_period_start_date
+            coverage_period_end_date = input.coverage_period_end_date
+            has_no_indigent = input.has_no_indigent
+            location_id = input.location_id
 
             # Parse membership_types if provided
             membership_types_data = None
