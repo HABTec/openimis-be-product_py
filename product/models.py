@@ -26,6 +26,18 @@ class Product(VersionedModel):
     conversion_product = models.ForeignKey(
         "self", models.DO_NOTHING, db_column="ConversionProdID", blank=True, null=True
     )
+    # Optional link to a parent product. When set, the child product inherits
+    # most attributes and related items/services from the parent. Changes on the
+    # parent will be propagated to children via a post_save signal, while
+    # preserving child's own location and enrolment dates.
+    parent_product = models.ForeignKey(
+        "self",
+        models.DO_NOTHING,
+        db_column="ParentProdID",
+        blank=True,
+        null=True,
+        related_name="children",
+    )
     administration_period = models.IntegerField(
         db_column="AdministrationPeriod", blank=True, null=True
     )
@@ -404,6 +416,32 @@ class Product(VersionedModel):
         verbose_name="Card Replacement Fee",
     )
 
+    def fields_to_propagate_from_parent(self):
+        """Return a list of field names to propagate from parent to child.
+        Excludes identifiers and child-overridden fields.
+        """
+        exclude = {
+            "id",
+            "uuid",
+            "code",
+            "name",
+            "location_id",
+            "location",
+            "enrolment_period_start_date",
+            "enrolment_period_end_date",
+            # Keep coverage dates in sync with parent by default (do not exclude)
+            "parent_product_id",
+            "parent_product",
+            "conversion_product_id",
+            "conversion_product",
+            "audit_user_id",
+        }
+        return [
+            f.name
+            for f in self._meta.fields
+            if f.name not in exclude
+        ]
+
     def has_cycle(self):
         return (
             bool(self.start_cycle_1)
@@ -703,3 +741,75 @@ class MembershipType(models.Model):
                     price=price
                 ))
         return cls.objects.bulk_create(objs)
+
+
+# Propagate selected changes from parent to all children
+@receiver(post_save, sender=Product)
+def propagate_product_changes_to_children(sender, instance: Product, created, **kwargs):
+    # Do not propagate when saving a child to avoid loops
+    if instance.parent_product_id:
+        return
+    # If there are no children, nothing to do
+    children = getattr(instance, "children", None)
+    if not children:
+        return
+    children_qs = children.all()
+    if not children_qs.exists():
+        return
+
+    fields = instance.fields_to_propagate_from_parent()
+    # Update scalar fields
+    for child in children_qs:
+        for fname in fields:
+            setattr(child, fname, getattr(instance, fname))
+        # Sync membership types to mirror the parent
+        child.save(update_fields=fields)
+        child.membership_types.set(instance.membership_types.all())
+        # Sync items and services to mirror the parent definition
+        # Replace child items/services with copies of parent's
+        child.items.all().delete()
+        for parent_item in instance.items.all():
+            ProductItem.objects.create(
+                audit_user_id=parent_item.audit_user_id,
+                product=child,
+                item=parent_item.item,
+                price_origin=parent_item.price_origin,
+                limitation_type=parent_item.limitation_type,
+                limitation_type_r=parent_item.limitation_type_r,
+                limitation_type_e=parent_item.limitation_type_e,
+                waiting_period_adult=parent_item.waiting_period_adult,
+                waiting_period_child=parent_item.waiting_period_child,
+                limit_no_adult=parent_item.limit_no_adult,
+                limit_no_child=parent_item.limit_no_child,
+                limit_adult=parent_item.limit_adult,
+                limit_child=parent_item.limit_child,
+                limit_adult_r=parent_item.limit_adult_r,
+                limit_adult_e=parent_item.limit_adult_e,
+                limit_child_r=parent_item.limit_child_r,
+                limit_child_e=parent_item.limit_child_e,
+                ceiling_exclusion_adult=parent_item.ceiling_exclusion_adult,
+                ceiling_exclusion_child=parent_item.ceiling_exclusion_child,
+            )
+        child.services.all().delete()
+        for parent_svc in instance.services.all():
+            ProductService.objects.create(
+                audit_user_id=parent_svc.audit_user_id,
+                product=child,
+                service=parent_svc.service,
+                price_origin=parent_svc.price_origin,
+                limit_adult=parent_svc.limit_adult,
+                limit_child=parent_svc.limit_child,
+                waiting_period_adult=parent_svc.waiting_period_adult,
+                waiting_period_child=parent_svc.waiting_period_child,
+                limit_no_adult=parent_svc.limit_no_adult,
+                limit_no_child=parent_svc.limit_no_child,
+                limitation_type=parent_svc.limitation_type,
+                limitation_type_r=parent_svc.limitation_type_r,
+                limitation_type_e=parent_svc.limitation_type_e,
+                limit_adult_r=parent_svc.limit_adult_r,
+                limit_adult_e=parent_svc.limit_adult_e,
+                limit_child_r=parent_svc.limit_child_r,
+                limit_child_e=parent_svc.limit_child_e,
+                ceiling_exclusion_adult=parent_svc.ceiling_exclusion_adult,
+                ceiling_exclusion_child=parent_svc.ceiling_exclusion_child,
+            )

@@ -41,6 +41,7 @@ from .services import (
     set_product_details,
     set_product_relative_distribution,
     update_product_location,
+    create_product_from_parent,
 )
 
 # Module-level logger
@@ -112,7 +113,7 @@ def create_or_update_product(user, data, is_duplicate=False, has_no_indigent=Fal
             try:
                 data["membership_types"] = json.loads(membership_types_input)
             except Exception as e:
-                raise ValueError(f"membership_types must be a valid JSON string: {e}")
+                raise Exception(f"membership_types must be a valid JSON string: {e}")
 
         # Validate chf_id_format
         if 'chf_id_format' in data and data['chf_id_format'] is not None:
@@ -387,27 +388,69 @@ def _create_product_with_relations(user, product_data, is_duplicate, has_no_indi
             product.refresh_from_db()
             logger.info(f"Successfully created product {product.id} with all related data")
             return product
-            
         except Exception as e:
-            error_msg = f"Error in _create_product_with_relations: {str(e)}"
-            logger.error(error_msg, exc_info=True)
-            
-            # Cleanup in case of error
-            if product and hasattr(product, 'id') and product.id:
-                logger.warning(f"Cleaning up product {product.id} due to error")
-                try:
-                    product.delete()
-                except Exception as delete_error:
-                    logger.error(f"Error during cleanup: {str(delete_error)}")
-            
-            # Re-raise with appropriate error message
-            error_msg = str(e)
-            if 'duplicate key' in error_msg.lower():
-                error_msg = "A product with this code already exists."
-            elif hasattr(e, 'message_dict'):
-                error_msg = ", ".join([f"{k}: {v[0]}" for k, v in e.message_dict.items()])
-                
-            raise Exception(f"Failed to create product: {error_msg}")
+            logger.error("Error in _create_product_with_relations: %s", e, exc_info=True)
+            raise
+
+
+class ExtendProductByCloneMutation(graphene.Mutation):
+    class Arguments:
+        parent_product_uuid = graphene.UUID(required=True)
+        location_uuid = graphene.UUID(required=False)
+        location_id = graphene.Int(required=False)
+        enrolment_period_start_date = graphene.Date(required=True)
+        enrolment_period_end_date = graphene.Date(required=True)
+        code = graphene.String(required=False)
+        name = graphene.String(required=False)
+
+    # Return the created product in the payload
+    product = graphene.Field(lambda: __import__("product.schema", fromlist=["ProductGQLType"]).ProductGQLType)
+
+    @classmethod
+    def mutate(cls, root, info, parent_product_uuid, enrolment_period_start_date, enrolment_period_end_date, location_uuid=None, location_id=None, code=None, name=None):
+        user = getattr(info.context, 'user', None)
+        if type(user) is AnonymousUser or not getattr(user, 'id', None):
+            raise ValidationError(_("mutation.authentication_required"))
+        if not user.has_perms(ProductConfig.gql_mutation_products_duplicate_perms):
+            raise PermissionDenied(_("unauthorized"))
+
+        # Resolve parent product
+        parent = Product.objects.filter(uuid=parent_product_uuid, validity_to__isnull=True).first()
+        if not parent:
+            raise ValidationError({"parent_product_uuid": _("Product not found")})
+
+        # Resolve location: prefer UUID, fallback to ID
+        location = None
+        if location_uuid:
+            location = LocationModel.objects.filter(uuid=location_uuid).first()
+            if not location:
+                raise ValidationError({"location_uuid": _("Location not found")})
+        elif location_id is not None:
+            location = LocationModel.objects.filter(id=location_id).first()
+            if not location:
+                raise ValidationError({"location_id": _("Location not found")})
+        else:
+            raise ValidationError({"location": _("Either location_uuid or location_id must be provided")})
+
+        if enrolment_period_start_date and enrolment_period_end_date and enrolment_period_start_date > enrolment_period_end_date:
+            raise ValidationError({"enrolment_period_end_date": _("End date must be on or after start date")})
+
+        try:
+            child = create_product_from_parent(
+                parent_product_id=parent.id,
+                new_location_id=location.id,
+                enrolment_start_date=enrolment_period_start_date,
+                enrolment_end_date=enrolment_period_end_date,
+                user=user,
+                code=code,
+                name=name,
+            )
+            return ExtendProductByCloneMutation(product=child)
+        except ValidationError:
+            raise
+        except Exception as e:
+            logger.error("Error cloning product: %s", e, exc_info=True)
+            raise Exception(_(f"Failed to clone product: {str(e)}"))
 
 def _process_membership_types(product, product_data, has_no_indigent=False):
     """Process and create membership types for the product.
@@ -863,6 +906,213 @@ class UpdateProductMutation(CreateOrUpdateProductMutation):
                     "detail": str(exc),
                 }
             ]
+
+
+class UpdateProductCustomMutation(graphene.Mutation):
+    """
+    Custom mutation to update a product by UUID with comprehensive field support.
+    This mutation allows updating all product fields including membership types.
+    """
+    class Arguments:
+        uuid = graphene.UUID(required=True, description="UUID of the product to update")
+        code = graphene.String(required=False, description="Product code")
+        name = graphene.String(required=False, description="Product name")
+        lump_sum = graphene.Decimal(required=False, description="Lump sum amount")
+        card_replacement_fee = graphene.Decimal(required=False, description="Card replacement fee")
+        premium_adult = graphene.Decimal(required=False, description="Premium for adults")
+        additional_spouse_contribution = graphene.Decimal(required=False, description="Additional spouse contribution")
+        penalty_price = graphene.Decimal(required=False, description="Penalty price")
+        membership_types = graphene.JSONString(required=False, description="Membership types as JSON")
+        age_maximal = graphene.Int(required=False, description="Maximum age")
+        chf_id_format = graphene.Int(required=False, description="CHF ID format (1, 2 or 3)")
+        enrolment_period_start_date = graphene.Date(required=False, description="Enrolment period start date")
+        enrolment_period_end_date = graphene.Date(required=False, description="Enrolment period end date")
+        coverage_period_start_date = graphene.Date(required=False, description="Coverage period start date")
+        coverage_period_end_date = graphene.Date(required=False, description="Coverage period end date")
+        location_id = graphene.Int(required=False, description="Location ID to associate with the product")
+        administration_period = graphene.Int(required=False, description="Administration period")
+        recurrence = graphene.Int(required=False, description="Recurrence")
+        threshold = graphene.Int(required=False, description="Threshold")
+        share_contribution = graphene.Decimal(required=False, description="Share contribution")
+        registration_lump_sum = graphene.Decimal(required=False, description="Registration lump sum")
+        registration_fee = graphene.Decimal(required=False, description="Registration fee")
+        # Deductibles & Ceilings
+        deductible = graphene.Decimal(required=False, description="Deductible amount")
+        deductible_ip = graphene.Decimal(required=False, description="Inpatient deductible")
+        deductible_op = graphene.Decimal(required=False, description="Outpatient deductible")
+        ceiling = graphene.Decimal(required=False, description="Ceiling amount")
+        ceiling_ip = graphene.Decimal(required=False, description="Inpatient ceiling")
+        ceiling_op = graphene.Decimal(required=False, description="Outpatient ceiling")
+        ceiling_type = graphene.String(required=False, description="Ceiling type (I, T, P)")
+        ceiling_interpretation = graphene.String(required=False, description="Ceiling interpretation")
+        # Additional fields
+        max_no_consultation = graphene.Int(required=False, description="Maximum number of consultations")
+        max_no_surgery = graphene.Int(required=False, description="Maximum number of surgeries")
+        max_no_delivery = graphene.Int(required=False, description="Maximum number of deliveries")
+        max_no_hospitalization = graphene.Int(required=False, description="Maximum number of hospitalizations")
+        max_no_visits = graphene.Int(required=False, description="Maximum number of visits")
+        max_no_antenatal = graphene.Int(required=False, description="Maximum number of antenatal visits")
+        max_amount_consultation = graphene.Decimal(required=False, description="Maximum consultation amount")
+        max_amount_surgery = graphene.Decimal(required=False, description="Maximum surgery amount")
+        max_amount_delivery = graphene.Decimal(required=False, description="Maximum delivery amount")
+        max_amount_hospitalization = graphene.Decimal(required=False, description="Maximum hospitalization amount")
+        max_amount_antenatal = graphene.Decimal(required=False, description="Maximum antenatal amount")
+        has_no_indigent = graphene.Boolean(required=False, default_value=False, description="Skip creating indigent membership type")
+
+    ok = graphene.Boolean()
+    message = graphene.String()
+    product = graphene.Field(lambda: __import__("product.schema", fromlist=["ProductGQLType"]).ProductGQLType)
+
+    @classmethod
+    def mutate(cls, root, info, uuid, **kwargs):
+        """
+        Update a product by UUID with the provided fields.
+        Only non-None values will be updated.
+        """
+        try:
+            user = getattr(info.context, 'user', None)
+            if not user or not hasattr(user, 'id'):
+                return UpdateProductCustomMutation(
+                    ok=False,
+                    message="Authentication required",
+                    product=None
+                )
+
+            # Check permissions
+            if not user.has_perms(ProductConfig.gql_mutation_products_edit_perms):
+                return UpdateProductCustomMutation(
+                    ok=False,
+                    message="Unauthorized: insufficient permissions to update products",
+                    product=None
+                )
+
+            audit_user_id = getattr(user, 'id_for_audit', None) or getattr(user, 'id', None) or 1
+
+            # Find the product to update
+            try:
+                product = Product.objects.get(uuid=uuid, validity_to__isnull=True)
+            except Product.DoesNotExist:
+                return UpdateProductCustomMutation(
+                    ok=False,
+                    message=f"Product with UUID {uuid} not found or is not active",
+                    product=None
+                )
+
+            # Parse membership_types if provided
+            membership_types_data = None
+            if 'membership_types' in kwargs and kwargs['membership_types']:
+                if isinstance(kwargs['membership_types'], str):
+                    try:
+                        membership_types_data = json.loads(kwargs['membership_types'])
+                    except Exception as e:
+                        return UpdateProductCustomMutation(
+                            ok=False,
+                            message=f"Invalid membership_types JSON: {e}",
+                            product=None
+                        )
+                elif isinstance(kwargs['membership_types'], dict):
+                    membership_types_data = kwargs['membership_types']
+
+            # Prepare update data - only include fields that are provided (not None)
+            update_data = {}
+            
+            # Map GraphQL field names to model field names for deductibles/ceilings
+            field_mappings = {
+                "deductible": "ded_insuree",
+                "deductible_ip": "ded_ip_insuree", 
+                "deductible_op": "ded_op_insuree",
+                "ceiling": "max_insuree",
+                "ceiling_ip": "max_ip_insuree",
+                "ceiling_op": "max_op_insuree"
+            }
+
+            # Process all provided fields
+            for field_name, value in kwargs.items():
+                if value is not None and field_name != 'membership_types':
+                    # Map field names if needed
+                    model_field = field_mappings.get(field_name, field_name)
+                    
+                    # Validate the field exists on the model
+                    if hasattr(Product, model_field):
+                        update_data[model_field] = value
+                    else:
+                        logger.warning(f"Field {model_field} does not exist on Product model")
+
+            # Always update audit_user_id
+            update_data['audit_user_id'] = audit_user_id
+
+            # Handle location change if provided
+            if 'location_id' in update_data:
+                new_location_id = update_data['location_id']
+                old_location_id = product.location_id
+                
+                if new_location_id != old_location_id:
+                    # Use the existing location update service
+                    try:
+                        updated_product, message = update_product_location(product.id, new_location_id)
+                        logger.info(message)
+                        
+                        # Remove location_id from update_data since it's already handled
+                        del update_data['location_id']
+                        
+                        # Update the remaining fields on the updated product
+                        if update_data:
+                            for field, value in update_data.items():
+                                if hasattr(updated_product, field):
+                                    setattr(updated_product, field, value)
+                            updated_product.save()
+                        
+                        # Handle membership_types if provided
+                        if membership_types_data:
+                            updated_product.membership_types.clear()
+                            _process_membership_types(
+                                updated_product,
+                                {'membership_types': membership_types_data},
+                                has_no_indigent=kwargs.get('has_no_indigent', False)
+                            )
+                        
+                        updated_product.refresh_from_db()
+                        return UpdateProductCustomMutation(
+                            ok=True,
+                            message=f"Product updated successfully. {message}",
+                            product=updated_product
+                        )
+                    except ValidationError as e:
+                        return UpdateProductCustomMutation(
+                            ok=False,
+                            message=str(e),
+                            product=None
+                        )
+
+            # Regular update without location change
+            if update_data:
+                # Use queryset update to bypass model validation if needed
+                Product.objects.filter(id=product.id).update(**update_data)
+                product.refresh_from_db()
+
+            # Handle membership_types if provided
+            if membership_types_data:
+                product.membership_types.clear()
+                _process_membership_types(
+                    product,
+                    {'membership_types': membership_types_data},
+                    has_no_indigent=kwargs.get('has_no_indigent', False)
+                )
+
+            product.refresh_from_db()
+            return UpdateProductCustomMutation(
+                ok=True,
+                message="Product updated successfully",
+                product=product
+            )
+
+        except Exception as e:
+            logger.error(f"Error updating product: {str(e)}", exc_info=True)
+            return UpdateProductCustomMutation(
+                ok=False,
+                message=f"Error updating product: {str(e)}",
+                product=None
+            )
 
 
 class DeleteProductMutation(OpenIMISMutation):
