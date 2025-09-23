@@ -3,11 +3,13 @@ from django.apps import apps
 from core import datetime
 from core import filter_validity
 from core.utils import TimeUtils
-from .models import Product
+from .models import Product, ProductItem, ProductService
 from model_clone.utils import create_copy_of_instance
 
 from django.core.exceptions import ValidationError
+from django.utils import timezone
 from django.db import transaction
+from django.db import models
 
 logger = logging.getLogger(__name__)
 
@@ -246,3 +248,192 @@ def update_product_location(product_id, new_location_id):
     except Exception as e:
         logger.error(f"Error updating product location: {str(e)}", exc_info=True)
         raise ValidationError(f"Error updating product location: {str(e)}")
+
+
+@transaction.atomic
+def create_product_from_parent(
+    parent_product_id: int,
+    new_location_id: int,
+    enrolment_start_date,
+    enrolment_end_date,
+    user,
+    code: str = None,
+    name: str = None,
+):
+    """
+    Clone a product to a new location with new enrolment period and link it to the parent
+    via Product.parent_product so that future changes on the parent propagate to the child.
+
+    Args:
+        parent_product_id: ID of the parent product to clone
+        new_location_id: Location ID for the cloned product
+        enrolment_start_date: date for the cloned product's enrolment start
+        enrolment_end_date: date for the cloned product's enrolment end
+        user: user performing the operation (must have id_for_audit)
+        code: optional product code for the child; generates one if not provided
+        name: optional product name for the child; defaults to parent name with suffix
+
+    Returns:
+        Product: the newly created child product
+
+    Raises:
+        ValidationError: if constraints are violated
+    """
+    parent = Product.objects.get(id=parent_product_id, validity_to__isnull=True)
+
+    # Enforce one product per location (custom clean also enforces this)
+    if Product.objects.filter(location_id=new_location_id, validity_to__isnull=True).exists():
+        raise ValidationError("A product already exists for the specified location. Only one product per location is allowed.")
+
+    child = Product()
+    # Copy fields except identifiers and child-specific overrides
+    exclude = {
+        'id','uuid','code','name','location_id','location',
+        'enrolment_period_start_date','enrolment_period_end_date',
+        'audit_user_id','parent_product','parent_product_id'
+    }
+    for f in Product._meta.fields:
+        if f.name in exclude:
+            continue
+        setattr(child, f.name, getattr(parent, f.name))
+
+    # Set overrides
+    child.audit_user_id = user.id_for_audit
+    child.parent_product = parent
+    child.location_id = new_location_id
+    child.enrolment_period_start_date = enrolment_start_date
+    child.enrolment_period_end_date = enrolment_end_date
+
+    # Set code and name
+    if not name:
+        name = f"{parent.name} - L{new_location_id}"
+    child.name = name
+
+    if not code:
+        # derive a code within 8 chars: parent.code + last 2 digits of location id
+        suffix = str(new_location_id)[-2:]
+        base = (parent.code or "P")[:6]
+        code = f"{base}{suffix}"
+        # ensure uniqueness if needed
+        idx = 1
+        while Product.objects.filter(code=code, validity_to__isnull=True).exists():
+            base = base[:-1] if len(base) > 1 else base
+            code = f"{base}{suffix}{idx}"
+            code = code[:8]
+            idx += 1
+    child.code = code
+
+    # Save child first to get PK
+    child.save()
+
+    # Copy membership types (M2M copy)
+    child.membership_types.set(parent.membership_types.all())
+
+    # Copy items
+    for pi in parent.items.all():
+        ProductItem.objects.create(
+            audit_user_id=user.id_for_audit,
+            product=child,
+            item=pi.item,
+            price_origin=pi.price_origin,
+            limitation_type=pi.limitation_type,
+            limitation_type_r=pi.limitation_type_r,
+            limitation_type_e=pi.limitation_type_e,
+            waiting_period_adult=pi.waiting_period_adult,
+            waiting_period_child=pi.waiting_period_child,
+            limit_no_adult=pi.limit_no_adult,
+            limit_no_child=pi.limit_no_child,
+            limit_adult=pi.limit_adult,
+            limit_child=pi.limit_child,
+            limit_adult_r=pi.limit_adult_r,
+            limit_adult_e=pi.limit_adult_e,
+            limit_child_r=pi.limit_child_r,
+            limit_child_e=pi.limit_child_e,
+            ceiling_exclusion_adult=pi.ceiling_exclusion_adult,
+            ceiling_exclusion_child=pi.ceiling_exclusion_child,
+        )
+
+    # Copy services
+    for ps in parent.services.all():
+        ProductService.objects.create(
+            audit_user_id=user.id_for_audit,
+            product=child,
+            service=ps.service,
+            price_origin=ps.price_origin,
+            limit_adult=ps.limit_adult,
+            limit_child=ps.limit_child,
+            waiting_period_adult=ps.waiting_period_adult,
+            waiting_period_child=ps.waiting_period_child,
+            limit_no_adult=ps.limit_no_adult,
+            limit_no_child=ps.limit_no_child,
+            limitation_type=ps.limitation_type,
+            limitation_type_r=ps.limitation_type_r,
+            limitation_type_e=ps.limitation_type_e,
+            limit_adult_r=ps.limit_adult_r,
+            limit_adult_e=ps.limit_adult_e,
+            limit_child_r=ps.limit_child_r,
+            limit_child_e=ps.limit_child_e,
+            ceiling_exclusion_adult=ps.ceiling_exclusion_adult,
+            ceiling_exclusion_child=ps.ceiling_exclusion_child,
+        )
+
+    return child
+
+
+def get_products_active_now_in_enrolment(current_date=None):
+    """
+    Return products that are currently valid and whose enrolment period
+    includes the current date.
+
+    Args:
+        current_date (date, optional): The date to check against. Defaults to
+            timezone.localdate().
+
+    Returns:
+        QuerySet[Product]: Products with validity_to is null and
+            enrolment_period_start_date <= current_date <= enrolment_period_end_date.
+    """
+    if current_date is None:
+        # Use now().date() to avoid calling localtime() on naive datetimes
+        current_date = timezone.now().date()
+    return Product.objects.filter(
+        validity_to__isnull=True,
+    ).filter(
+        models.Q(enrolment_period_start_date__isnull=True) | models.Q(enrolment_period_start_date__lte=current_date)
+    ).filter(
+        models.Q(enrolment_period_end_date__isnull=True) | models.Q(enrolment_period_end_date__gte=current_date)
+    )
+
+
+@transaction.atomic
+def update_product_fields(product_uuid, update_data, user):
+    """
+    Update a product's fields by UUID.
+    
+    Args:
+        product_uuid (str): UUID of the product to update
+        update_data (dict): Dictionary of fields to update
+        user: User performing the update
+        
+    Returns:
+        Product: Updated product instance
+        
+    Raises:
+        ValidationError: If product not found or validation fails
+    """
+    try:
+        product = Product.objects.get(uuid=product_uuid, validity_to__isnull=True)
+    except Product.DoesNotExist:
+        raise ValidationError(f"Product with UUID {product_uuid} not found or is not active")
+    
+    # Set audit user
+    audit_user_id = getattr(user, 'id_for_audit', None) or getattr(user, 'id', None) or 1
+    update_data['audit_user_id'] = audit_user_id
+    
+    # Update the product
+    for field, value in update_data.items():
+        if hasattr(product, field):
+            setattr(product, field, value)
+    
+    product.save()
+    return product

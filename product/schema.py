@@ -16,8 +16,10 @@ from .gql_mutations import (
     CreateProductMutation,
     DuplicateProductMutation,
     UpdateProductMutation,
+    UpdateProductCustomMutation,
     DeleteProductMutation,
     CreateProductCustomMutation,
+    ExtendProductByCloneMutation,
 )
 from .apps import ProductConfig
 from .custom_schema import Query as CustomQuery
@@ -359,5 +361,7 @@ class Mutation(graphene.ObjectType):
     create_product = CreateProductMutation.Field()
     duplicate_product = DuplicateProductMutation.Field()
     update_product = UpdateProductMutation.Field()
+    update_product_custom = UpdateProductCustomMutation.Field()
     delete_product = DeleteProductMutation.Field()
     create_product_custom = CreateProductCustomMutation.Field()
+    extend_product_by_clone = ExtendProductByCloneMutation.Field()

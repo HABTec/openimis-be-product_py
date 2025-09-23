@@ -3,6 +3,7 @@ from graphene_django import DjangoObjectType
 from core.models import User, InteractiveUser, Role
 from product.models import Product
 from .gql_types import MembershipTypeGQLType
+from .services import get_products_active_now_in_enrolment
 
 from django.core.exceptions import PermissionDenied
 from product.apps import ProductConfig
@@ -225,8 +226,14 @@ class UserProductsGQLType(DjangoObjectType):
 
 class Query(graphene.ObjectType):
     user_products = graphene.Field(UserProductsGQLType, username=graphene.String())
+    active_enrolment_products = graphene.List(CustomProductGQLType)
 
     def resolve_user_products(self, info, username, **kwargs):
         if not info.context.user.has_perms(ProductConfig.gql_query_products_perms):
             raise PermissionDenied(_("unauthorized"))
         return User.objects.get(username=username)
+
+    def resolve_active_enrolment_products(self, info, **kwargs):
+        if not info.context.user.has_perms(ProductConfig.gql_query_products_perms):
+            raise PermissionDenied(_("unauthorized"))
+        return get_products_active_now_in_enrolment()
