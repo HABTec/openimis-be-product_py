@@ -1017,7 +1017,59 @@ class UpdateProductMutation(CreateOrUpdateProductMutation):
                     "detail": str(exc),
                 }
             ]
+class ProductInputCustom(graphene.InputObjectType):
+    uuid = graphene.UUID(required=True, description="UUID of the product to update")
+    code = graphene.String(required=False, description="Product code")
+    name = graphene.String(required=False, description="Product name")
+    lump_sum = graphene.Decimal(required=False, description="Lump sum amount")
+    card_replacement_fee = graphene.Decimal(required=False, description="Card replacement fee")
+    premium_adult = graphene.Decimal(required=False, description="Premium for adults")
+    additional_spouse_contribution = graphene.Decimal(required=False, description="Additional spouse contribution")
+    penalty_price = graphene.Decimal(required=False, description="Penalty price")
+    membership_types = graphene.JSONString(required=False, description="Membership types as JSON")
+    age_maximal = graphene.Int(required=False, description="Maximum age")
+    chf_id_format = graphene.Int(required=False, description="CHF ID format (1, 2 or 3)")
+    enrolment_period_start_date = graphene.Date(required=False, description="Enrolment period start date")
+    enrolment_period_end_date = graphene.Date(required=False, description="Enrolment period end date")
+    coverage_period_start_date = graphene.Date(required=False, description="Coverage period start date")
+    coverage_period_end_date = graphene.Date(required=False, description="Coverage period end date")
+    location_id = graphene.Int(required=False, description="Location ID to associate with the product")
+    administration_period = graphene.Int(required=False, description="Administration period")
+    recurrence = graphene.Int(required=False, description="Recurrence")
+    threshold = graphene.Int(required=False, description="Threshold")
+    share_contribution = graphene.Decimal(required=False, description="Share contribution")
+    registration_lump_sum = graphene.Decimal(required=False, description="Registration lump sum")
+    registration_fee = graphene.Decimal(required=False, description="Registration fee")
+    client_mutation_id = graphene.String(required=False)
+    client_mutation_label = graphene.String(required=False)
+    # Deductibles & Ceilings
+    deductible = graphene.Decimal(required=False, description="Deductible amount")
+    deductible_ip = graphene.Decimal(required=False, description="Inpatient deductible")
+    deductible_op = graphene.Decimal(required=False, description="Outpatient deductible")
+    ceiling = graphene.Decimal(required=False, description="Ceiling amount")
+    ceiling_ip = graphene.Decimal(required=False, description="Inpatient ceiling")
+    ceiling_op = graphene.Decimal(required=False, description="Outpatient ceiling")
+    ceiling_type = graphene.String(required=False, description="Ceiling type (I, T, P)")
+    ceiling_interpretation = graphene.String(required=False, description="Ceiling interpretation")
 
+    # Additional fields
+    max_no_consultation = graphene.Int(required=False, description="Maximum number of consultations")
+    max_no_surgery = graphene.Int(required=False, description="Maximum number of surgeries")
+    max_no_delivery = graphene.Int(required=False, description="Maximum number of deliveries")
+    max_no_hospitalization = graphene.Int(required=False, description="Maximum number of hospitalizations")
+    max_no_visits = graphene.Int(required=False, description="Maximum number of visits")
+    max_no_antenatal = graphene.Int(required=False, description="Maximum number of antenatal visits")
+    max_amount_consultation = graphene.Decimal(required=False, description="Maximum consultation amount")
+    max_amount_surgery = graphene.Decimal(required=False, description="Maximum surgery amount")
+    max_amount_delivery = graphene.Decimal(required=False, description="Maximum delivery amount")
+    max_amount_hospitalization = graphene.Decimal(required=False, description="Maximum hospitalization amount")
+    max_amount_antenatal = graphene.Decimal(required=False, description="Maximum antenatal amount")
+
+    has_no_indigent = graphene.Boolean(
+        required=False,
+        default_value=False,
+        description="Skip creating indigent membership type"
+    )
 
 class UpdateProductCustomMutation(graphene.Mutation):
     """
@@ -1025,50 +1077,7 @@ class UpdateProductCustomMutation(graphene.Mutation):
     This mutation allows updating all product fields including membership types.
     """
     class Arguments:
-        uuid = graphene.UUID(required=True, description="UUID of the product to update")
-        code = graphene.String(required=False, description="Product code")
-        name = graphene.String(required=False, description="Product name")
-        lump_sum = graphene.Decimal(required=False, description="Lump sum amount")
-        card_replacement_fee = graphene.Decimal(required=False, description="Card replacement fee")
-        premium_adult = graphene.Decimal(required=False, description="Premium for adults")
-        additional_spouse_contribution = graphene.Decimal(required=False, description="Additional spouse contribution")
-        penalty_price = graphene.Decimal(required=False, description="Penalty price")
-        membership_types = graphene.JSONString(required=False, description="Membership types as JSON")
-        age_maximal = graphene.Int(required=False, description="Maximum age")
-        chf_id_format = graphene.Int(required=False, description="CHF ID format (1, 2 or 3)")
-        enrolment_period_start_date = graphene.Date(required=False, description="Enrolment period start date")
-        enrolment_period_end_date = graphene.Date(required=False, description="Enrolment period end date")
-        coverage_period_start_date = graphene.Date(required=False, description="Coverage period start date")
-        coverage_period_end_date = graphene.Date(required=False, description="Coverage period end date")
-        location_id = graphene.Int(required=False, description="Location ID to associate with the product")
-        administration_period = graphene.Int(required=False, description="Administration period")
-        recurrence = graphene.Int(required=False, description="Recurrence")
-        threshold = graphene.Int(required=False, description="Threshold")
-        share_contribution = graphene.Decimal(required=False, description="Share contribution")
-        registration_lump_sum = graphene.Decimal(required=False, description="Registration lump sum")
-        registration_fee = graphene.Decimal(required=False, description="Registration fee")
-        # Deductibles & Ceilings
-        deductible = graphene.Decimal(required=False, description="Deductible amount")
-        deductible_ip = graphene.Decimal(required=False, description="Inpatient deductible")
-        deductible_op = graphene.Decimal(required=False, description="Outpatient deductible")
-        ceiling = graphene.Decimal(required=False, description="Ceiling amount")
-        ceiling_ip = graphene.Decimal(required=False, description="Inpatient ceiling")
-        ceiling_op = graphene.Decimal(required=False, description="Outpatient ceiling")
-        ceiling_type = graphene.String(required=False, description="Ceiling type (I, T, P)")
-        ceiling_interpretation = graphene.String(required=False, description="Ceiling interpretation")
-        # Additional fields
-        max_no_consultation = graphene.Int(required=False, description="Maximum number of consultations")
-        max_no_surgery = graphene.Int(required=False, description="Maximum number of surgeries")
-        max_no_delivery = graphene.Int(required=False, description="Maximum number of deliveries")
-        max_no_hospitalization = graphene.Int(required=False, description="Maximum number of hospitalizations")
-        max_no_visits = graphene.Int(required=False, description="Maximum number of visits")
-        max_no_antenatal = graphene.Int(required=False, description="Maximum number of antenatal visits")
-        max_amount_consultation = graphene.Decimal(required=False, description="Maximum consultation amount")
-        max_amount_surgery = graphene.Decimal(required=False, description="Maximum surgery amount")
-        max_amount_delivery = graphene.Decimal(required=False, description="Maximum delivery amount")
-        max_amount_hospitalization = graphene.Decimal(required=False, description="Maximum hospitalization amount")
-        max_amount_antenatal = graphene.Decimal(required=False, description="Maximum antenatal amount")
-        has_no_indigent = graphene.Boolean(required=False, default_value=False, description="Skip creating indigent membership type")
+        input = ProductInputCustom(required=True)
 
     ok = graphene.Boolean()
     message = graphene.String()
@@ -1076,12 +1085,14 @@ class UpdateProductCustomMutation(graphene.Mutation):
     mutation_logs = graphene.List(graphene.JSONString)
 
     @classmethod
-    def mutate(cls, root, info, uuid, **kwargs):
+    def mutate(cls, root, info, **kwargs):
         """
         Update a product by UUID with the provided fields.
         Only non-None values will be updated.
         """
         try:
+            kwargs = kwargs.get('input', {})
+            uuid = kwargs['uuid']
             user = getattr(info.context, 'user', None)
             if not user or not hasattr(user, 'id'):
                 return UpdateProductCustomMutation(
