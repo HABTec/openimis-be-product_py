@@ -16,6 +16,19 @@ DEFAULT_CFG = {
     "default_limit": 'C',
     "default_limit_co_insurance_value": 100,
     "default_limit_fixed_value": 0,
+    "penaltyConfig": [
+        {
+            "name": "Years",
+            "description": "Number of years the insuree missed",
+            "code": "Years"
+        },
+        {
+            "name": "Calculated Premium",
+            "description": "Total calculated premium",
+            "code": "CalculatedPremium"
+        }
+    ]
+    
 }
 
 
@@ -23,7 +36,7 @@ class ProductConfig(AppConfig):
     name = MODULE_NAME
 
     gql_query_products_perms = []
-
+    penalityConfig = []
     gql_mutation_products_add_perms = []
     gql_mutation_products_edit_perms = []
     gql_mutation_products_delete_perms = []

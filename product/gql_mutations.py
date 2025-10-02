@@ -1070,6 +1070,7 @@ class ProductInputCustom(graphene.InputObjectType):
         default_value=False,
         description="Skip creating indigent membership type"
     )
+    penality_formula = graphene.String(required=False, description="Penality formula for the product")
 
 class UpdateProductCustomMutation(graphene.Mutation):
     """
@@ -1091,6 +1092,7 @@ class UpdateProductCustomMutation(graphene.Mutation):
         Only non-None values will be updated.
         """
         try:
+            print("penality config"  ,  ProductConfig.penalityConfig)
             kwargs = kwargs.get('input', {})
             uuid = kwargs['uuid']
             user = getattr(info.context, 'user', None)
@@ -1352,7 +1354,7 @@ class CreateProductInput(graphene.InputObjectType):
     location_id = graphene.Int(required=False, description="Location ID to associate with the product")
     client_mutation_id = graphene.String(required=False)
     client_mutation_label = graphene.String(required=False)
-
+    penality_formula = graphene.String(required=False, description="Penality formula for the product")
 
 class CreateProductCustomMutation(graphene.Mutation):
     
@@ -1388,7 +1390,7 @@ class CreateProductCustomMutation(graphene.Mutation):
             coverage_period_end_date = input.coverage_period_end_date
             has_no_indigent = input.has_no_indigent
             location_id = input.location_id
-
+            penality_formula = input.penality_formula
             # Parse membership_types if provided
             membership_types_data = None
             if membership_types:
@@ -1440,7 +1442,8 @@ class CreateProductCustomMutation(graphene.Mutation):
                         update_data['coverage_period_start_date'] = coverage_period_start_date
                     if coverage_period_end_date is not None:
                         update_data['coverage_period_end_date'] = coverage_period_end_date
-                    
+                    if penality_formula is not None:
+                        update_data['penality_formula'] = penality_formula
                     # Update the product directly in the database
                     Product.objects.filter(id=existing_product.id).update(**update_data)
                     

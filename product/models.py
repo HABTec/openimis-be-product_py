@@ -415,6 +415,7 @@ class Product(VersionedModel):
         blank=False,
         verbose_name="Card Replacement Fee",
     )
+    penalityFormula = models.CharField(db_column="PenalityFormula", max_length=100 , blank=True, null=True)
 
     def fields_to_propagate_from_parent(self):
         """Return a list of field names to propagate from parent to child.
