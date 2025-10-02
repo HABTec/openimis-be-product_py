@@ -65,6 +65,7 @@ class ProductGQLType(DjangoObjectType):
     ceiling_ip = graphene.Decimal()
     ceiling_op = graphene.Decimal()
     membership_types = graphene.List(MembershipTypeGQLType)
+    penalty_formula = graphene.String()
 
     def resolve_membership_types(self, info):
         return self.membership_types.all()
