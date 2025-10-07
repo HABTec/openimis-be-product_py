@@ -47,41 +47,6 @@ from .services import (
 # Module-level logger
 logger = logging.getLogger(__name__)
 
-
-def create_mutation_log(user, product, client_mutation_id=None, mutation_label="Product Mutation"):
-    """
-    Create a mutation log entry for a product operation.
-    
-    Args:
-        user: The user performing the mutation
-        product: The product instance
-        client_mutation_id: Optional client mutation ID
-        mutation_label: Label for the mutation
-        
-    Returns:
-        MutationLog: The created mutation log instance
-    """
-    try:
-        mutation_log = MutationLog.objects.create(
-            user=user,
-            object_id=product.id,
-            client_mutation_id=client_mutation_id or str(uuidlib.uuid4()),
-            client_mutation_label=mutation_label
-        )
-        
-        # Create ProductMutation link
-        ProductMutation.objects.create(
-            product=product,
-            mutation=mutation_log
-        )
-        
-        logger.info(f"Created mutation log {mutation_log.id} for product {product.id}")
-        return mutation_log
-    except Exception as e:
-        logger.error(f"Failed to create mutation log: {str(e)}")
-        return None
-
-
 def get_product_mutation_logs(product, limit=10):
     """
     Retrieve recent mutation logs for a product.
@@ -293,12 +258,7 @@ def create_or_update_product(user, data, is_duplicate=False, has_no_indigent=Fal
                         if 'membership_types' in data and data['membership_types']:
                             _process_membership_types(updated_product, {'membership_types': data['membership_types']})
                         
-                        # Create mutation log for location change update
-                        create_mutation_log(
-                            user=user,
-                            product=updated_product,
-                            mutation_label="Update Product (Location Changed)"
-                        )
+                       
                         
                         # Return the updated product
                         updated_product.refresh_from_db()
@@ -321,12 +281,7 @@ def create_or_update_product(user, data, is_duplicate=False, has_no_indigent=Fal
                     if 'membership_types' in data and data['membership_types']:
                         _process_membership_types(existing_product, {'membership_types': data['membership_types']})
 
-                    # Create mutation log for regular update
-                    create_mutation_log(
-                        user=user,
-                        product=existing_product,
-                        mutation_label="Update Product"
-                    )
+                    
 
                     # Return the updated product after refresh
                     existing_product.refresh_from_db()
@@ -455,13 +410,7 @@ def _create_product_with_relations(user, product_data, is_duplicate, has_no_indi
             if 'product_items' in product_data and product_data['product_items']:
                 _process_product_items(product, product_data)
             
-            # Create mutation log
-            create_mutation_log(
-                user=user,
-                product=product,
-                client_mutation_id=product_data.get('client_mutation_id'),
-                mutation_label="Create Product"
-            )
+            
             
             # Refresh and return the product
             product.refresh_from_db()
@@ -525,12 +474,7 @@ class ExtendProductByCloneMutation(graphene.Mutation):
                 name=name,
             )
             
-            # Create mutation log
-            create_mutation_log(
-                user=user,
-                product=child,
-                mutation_label="Extend Product by Clone"
-            )
+            
             
             return ExtendProductByCloneMutation(product=child)
         except ValidationError:
@@ -885,20 +829,7 @@ class CreateProductMutation(CreateOrUpdateProductMutation):
                 return [{"message": str(exc)}]
             logger.info("Product created: %s", product)
             
-            # Create mutation log
-            try:
-                mutation_log = create_mutation_log(
-                    user=user,
-                    product=product,
-                    client_mutation_id=data.get('client_mutation_id'),
-                    mutation_label="Create Product"
-                )
-                
-                # Get mutation logs for response
-                mutation_logs = get_product_mutation_logs(product)
-            except Exception as log_exc:
-                logger.error("Failed to create/retrieve mutation logs: %s", log_exc)
-                mutation_logs = []
+           
             
             return None
         except ValueError as exc:
@@ -973,12 +904,6 @@ class DuplicateProductMutation(OpenIMISMutation):
                 service.product = new_product
                 service.save()
 
-        # Create mutation log
-        create_mutation_log(
-            user=user,
-            product=new_product,
-            mutation_label="Duplicate Product"
-        )
 
         return new_product
 
@@ -1242,12 +1167,7 @@ class DeleteProductMutation(OpenIMISMutation):
                 )
                 continue
             try:
-                # Create mutation log before deletion
-                create_mutation_log(
-                    user=user,
-                    product=product,
-                    mutation_label="Delete Product"
-                )
+                
                 
                 product.delete_history()
             except Exception as exc:
@@ -1397,17 +1317,6 @@ class CreateProductCustomMutation(OpenIMISMutation):
                             has_no_indigent=has_no_indigent
                         )
                     
-                    # Create mutation log
-                    # try:
-                    #     create_mutation_log(
-                    #         user=user,
-                    #         product=existing_product,
-                    #         mutation_label="Update Existing Product (Create Request)"
-                    #     )
-                        
-                    # except Exception as log_exc:
-                    #     logger.error("Failed to create/retrieve mutation logs: %s", log_exc)
-
                     
                     return None
             
@@ -1480,17 +1389,6 @@ class CreateProductCustomMutation(OpenIMISMutation):
                                 has_no_indigent=has_no_indigent
                             )
                         
-                        # Create mutation log
-                        try:
-                            create_mutation_log(
-                                user=user,
-                                product=existing_product,
-                                mutation_label="Update Existing Product (Validation Fallback)"
-                            )
-                            
-                        except Exception as log_exc:
-                            logger.error("Failed to create/retrieve mutation logs: %s", log_exc)
-                        
                         return None
                 return [{
                     "message":str(e)
@@ -1503,17 +1401,7 @@ class CreateProductCustomMutation(OpenIMISMutation):
                 has_no_indigent=has_no_indigent
             )
 
-            # Create mutation log
-            try:
-                create_mutation_log(
-                    user=user,
-                    product=product,
-                    mutation_label="Create Product"
-                )
-                
-            except Exception as log_exc:
-                logger.error("Failed to create/retrieve mutation logs: %s", log_exc)
-            
+          
             return None
         except Exception as e:
             return [{
