@@ -864,16 +864,16 @@ class CreateProductMutation(CreateOrUpdateProductMutation):
                     try:
                         membership_types_data = json.loads(membership_types_raw)
                     except Exception as e:
-                        return {"ok": False, "message": f"Invalid membershipTypes JSON: {e}", "product": None}
+                        return [{"message": f"Invalid membershipTypes JSON: {e}"}]
                 elif isinstance(membership_types_raw, dict):
                     membership_types_data = membership_types_raw
                 else:
-                    return {"ok": False, "message": "membershipTypes must be a JSON string or dict", "product": None}
+                    return [{"message": "membershipTypes must be a JSON string or dict"}]
                 data["membership_types"] = membership_types_data
             required_fields = ["code", "name", "card_replacement_fee"]
             missing = [f for f in required_fields if not data.get(f)]
             if missing:
-                return {"ok": False, "message": f"Missing required fields: {', '.join(missing)}", "product": None}
+                return [{"message": f"Missing required fields: {', '.join(missing)}"}]
             try:
                 product = cls.do_mutate(
                     ProductConfig.gql_mutation_products_add_perms,
@@ -882,7 +882,7 @@ class CreateProductMutation(CreateOrUpdateProductMutation):
                 )
             except Exception as exc:
                 logger.error("Exception in do_mutate: %s", exc)
-                return {"ok": False, "message": str(exc), "product": None}
+                return [{"message": str(exc)}]
             logger.info("Product created: %s", product)
             
             # Create mutation log
@@ -900,23 +900,13 @@ class CreateProductMutation(CreateOrUpdateProductMutation):
                 logger.error("Failed to create/retrieve mutation logs: %s", log_exc)
                 mutation_logs = []
             
-            return {
-                "ok": True,
-                "message": "Product created successfully.",
-                "product": {
-                    "id": getattr(product, "id", None),
-                    "code": getattr(product, "code", None),
-                    "name": getattr(product, "name", None),
-                    "cardReplacementFee": str(getattr(product, "card_replacement_fee", "")) if getattr(product, "card_replacement_fee", None) is not None else None,
-                },
-                "mutation_logs": mutation_logs
-            }
+            return None
         except ValueError as exc:
             logger.error("ValueError in CreateProductMutation: %s", exc)
-            return {"ok": False, "message": str(exc), "product": None}
+            return [{ "message": str(exc)}]
         except Exception as exc:
             logger.error("Exception in CreateProductMutation: %s", exc)
-            return {"ok": False, "message": str(exc), "product": None}
+            return [{ "message": str(exc)}]
 
 
 class DuplicateProductMutation(OpenIMISMutation):
@@ -1017,7 +1007,7 @@ class UpdateProductMutation(CreateOrUpdateProductMutation):
                     "detail": str(exc),
                 }
             ]
-class ProductInputCustom(graphene.InputObjectType):
+class ProductInputCustom(OpenIMISMutation.Input):
     uuid = graphene.UUID(required=True, description="UUID of the product to update")
     code = graphene.String(required=False, description="Product code")
     name = graphene.String(required=False, description="Product name")
@@ -1072,44 +1062,36 @@ class ProductInputCustom(graphene.InputObjectType):
     )
     penality_formula = graphene.String(required=False, description="Penality formula for the product")
 
-class UpdateProductCustomMutation(graphene.Mutation):
+class UpdateProductCustomMutation(OpenIMISMutation):
     """
     Custom mutation to update a product by UUID with comprehensive field support.
     This mutation allows updating all product fields including membership types.
     """
-    class Arguments:
-        input = ProductInputCustom(required=True)
 
-    ok = graphene.Boolean()
-    message = graphene.String()
-    product = graphene.Field(lambda: __import__("product.schema", fromlist=["ProductGQLType"]).ProductGQLType)
-    mutation_logs = graphene.List(graphene.JSONString)
+    _mutation_module = "product"
+    _mutation_class = "UpdateProductMutation"
+
+    class Input(ProductInputCustom):
+        pass
 
     @classmethod
-    def mutate(cls, root, info, **kwargs):
+    def async_mutate(cls, user, **kwargs):
         """
         Update a product by UUID with the provided fields.
         Only non-None values will be updated.
         """
         try:
-            print("penality config"  ,  ProductConfig.penalityConfig)
-            kwargs = kwargs.get('input', {})
             uuid = kwargs['uuid']
-            user = getattr(info.context, 'user', None)
             if not user or not hasattr(user, 'id'):
-                return UpdateProductCustomMutation(
-                    ok=False,
-                    message="Authentication required",
-                    product=None
-                )
+                return [{
+                    "message":"Authentication required"
+                }]
 
             # Check permissions
             if not user.has_perms(ProductConfig.gql_mutation_products_edit_perms):
-                return UpdateProductCustomMutation(
-                    ok=False,
-                    message="Unauthorized: insufficient permissions to update products",
-                    product=None
-                )
+                return [{
+                    "message":"Unauthorized: insufficient permissions to update products"}]
+                
 
             audit_user_id = getattr(user, 'id_for_audit', None) or getattr(user, 'id', None) or 1
 
@@ -1117,11 +1099,9 @@ class UpdateProductCustomMutation(graphene.Mutation):
             try:
                 product = Product.objects.get(uuid=uuid, validity_to__isnull=True)
             except Product.DoesNotExist:
-                return UpdateProductCustomMutation(
-                    ok=False,
-                    message=f"Product with UUID {uuid} not found or is not active",
-                    product=None
-                )
+                return [{
+                    "message":f"Product with UUID {uuid} not found or is not active",
+                    }]
 
             # Parse membership_types if provided
             membership_types_data = None
@@ -1198,32 +1178,13 @@ class UpdateProductCustomMutation(graphene.Mutation):
                         
                         updated_product.refresh_from_db()
                         
-                        # Create mutation log
-                        try:
-                            create_mutation_log(
-                                user=user,
-                                product=updated_product,
-                                mutation_label="Update Product (Location Changed)"
-                            )
-                            
-                            # Get mutation logs for response
-                            mutation_logs = get_product_mutation_logs(updated_product)
-                        except Exception as log_exc:
-                            logger.error("Failed to create/retrieve mutation logs: %s", log_exc)
-                            mutation_logs = []
                         
-                        return UpdateProductCustomMutation(
-                            ok=True,
-                            message=f"Product updated successfully. {message}",
-                            product=updated_product,
-                            mutation_logs=mutation_logs
-                        )
+                        
+                        return None
                     except ValidationError as e:
-                        return UpdateProductCustomMutation(
-                            ok=False,
-                            message=str(e),
-                            product=None
-                        )
+                        return [{
+                            "message":str(e)
+                        }]
 
             # Regular update without location change
             if update_data:
@@ -1242,34 +1203,14 @@ class UpdateProductCustomMutation(graphene.Mutation):
 
             product.refresh_from_db()
             
-            # Create mutation log
-            try:
-                create_mutation_log(
-                    user=user,
-                    product=product,
-                    mutation_label="Update Product"
-                )
-                
-                # Get mutation logs for response
-                mutation_logs = get_product_mutation_logs(product)
-            except Exception as log_exc:
-                logger.error("Failed to create/retrieve mutation logs: %s", log_exc)
-                mutation_logs = []
             
-            return UpdateProductCustomMutation(
-                ok=True,
-                message="Product updated successfully",
-                product=product,
-                mutation_logs=mutation_logs
-            )
+            return None
 
         except Exception as e:
             logger.error(f"Error updating product: {str(e)}", exc_info=True)
-            return UpdateProductCustomMutation(
-                ok=False,
-                message=f"Error updating product: {str(e)}",
-                product=None
-            )
+            return [{
+                "message":f"Error updating product: {str(e)}",
+                }]
 
 
 class DeleteProductMutation(OpenIMISMutation):
@@ -1335,7 +1276,7 @@ def get_product_gqltype():
     return ProductGQLType
 
 
-class CreateProductInput(graphene.InputObjectType):
+class CreateProductInput(OpenIMISMutation.Input):
     code = graphene.String(required=True)
     name = graphene.String(required=True)
     lump_sum = graphene.Decimal(required=False)
@@ -1352,45 +1293,42 @@ class CreateProductInput(graphene.InputObjectType):
     coverage_period_end_date = graphene.Date(required=False)
     has_no_indigent = graphene.Boolean(required=False, default_value=False)
     location_id = graphene.Int(required=False, description="Location ID to associate with the product")
-    client_mutation_id = graphene.String(required=False)
-    client_mutation_label = graphene.String(required=False)
     penality_formula = graphene.String(required=False, description="Penality formula for the product")
 
-class CreateProductCustomMutation(graphene.Mutation):
-    
+class CreateProductCustomMutation(OpenIMISMutation):
+    _mutation_module = "product"
+    _mutation_class = "CreateProductcustomMutation"
+
   
-    class Arguments:
-        input = CreateProductInput(required=True)
-    ok = graphene.Boolean()
-    message = graphene.String()
-    product = graphene.Field(lambda: __import__("product.schema", fromlist=["ProductGQLType"]).ProductGQLType)
-    mutation_logs = graphene.List(graphene.JSONString)
+    class Input(CreateProductInput):
+        pass
 
     @classmethod
-    def mutate(cls, root, info, input):
+    def async_mutate(cls, user, **data):
+
         from .schema import ProductGQLType
         try:
-            user = getattr(info.context, 'user', None)
+            input  = data
             audit_user_id = getattr(user, 'id_for_audit', None) or getattr(user, 'id', None) or 1
 
             # Extract all fields from input
-            code = input.code
-            name = input.name
-            card_replacement_fee = input.card_replacement_fee
-            lump_sum = input.lump_sum
-            premium_adult = input.premium_adult
-            additional_spouse_contribution = input.additional_spouse_contribution
-            penalty_price = input.penalty_price
-            membership_types = input.membership_types
-            age_maximal = input.age_maximal
-            chf_id_format = input.chf_id_format
-            enrolment_period_start_date = input.enrolment_period_start_date
-            enrolment_period_end_date = input.enrolment_period_end_date
-            coverage_period_start_date = input.coverage_period_start_date
-            coverage_period_end_date = input.coverage_period_end_date
-            has_no_indigent = input.has_no_indigent
-            location_id = input.location_id
-            penality_formula = input.penality_formula
+            code = input["code"]
+            name = input["name"]
+            card_replacement_fee = input["card_replacement_fee"]
+            lump_sum = 0
+            premium_adult = input["premium_adult"]
+            additional_spouse_contribution = input["additional_spouse_contribution"]
+            penalty_price = input["penalty_price"]
+            membership_types = input["membership_types"]
+            age_maximal = input["age_maximal"]
+            chf_id_format = input["chf_id_format"]
+            enrolment_period_start_date = input["enrolment_period_start_date"]
+            enrolment_period_end_date = input["enrolment_period_end_date"]
+            coverage_period_start_date = input["coverage_period_start_date"]
+            coverage_period_end_date = input["coverage_period_end_date"]
+            has_no_indigent = input["has_no_indigent"]
+            location_id = input["location_id"]
+            penality_formula = input["penality_formula"]
             # Parse membership_types if provided
             membership_types_data = None
             if membership_types:
@@ -1399,11 +1337,9 @@ class CreateProductCustomMutation(graphene.Mutation):
                 elif isinstance(membership_types, dict):
                     membership_types_data = membership_types
                 else:
-                    return CreateProductCustomMutation(
-                        ok=False,
-                        message="membership_types must be a JSON string or dict",
-                        product=None
-                    )
+                    return [{
+                        "message":"membership_types must be a JSON string or dict",
+                        }]
 
             # Check if a product already exists for this location
             if location_id:
@@ -1462,25 +1398,18 @@ class CreateProductCustomMutation(graphene.Mutation):
                         )
                     
                     # Create mutation log
-                    try:
-                        create_mutation_log(
-                            user=user,
-                            product=existing_product,
-                            mutation_label="Update Existing Product (Create Request)"
-                        )
+                    # try:
+                    #     create_mutation_log(
+                    #         user=user,
+                    #         product=existing_product,
+                    #         mutation_label="Update Existing Product (Create Request)"
+                    #     )
                         
-                        # Get mutation logs for response
-                        mutation_logs = get_product_mutation_logs(existing_product)
-                    except Exception as log_exc:
-                        logger.error("Failed to create/retrieve mutation logs: %s", log_exc)
-                        mutation_logs = []
+                    # except Exception as log_exc:
+                    #     logger.error("Failed to create/retrieve mutation logs: %s", log_exc)
+
                     
-                    return CreateProductCustomMutation(
-                        ok=True,
-                        message=f"Updated existing product '{existing_product.name}' (code: {existing_product.code}) for this location.",
-                        product=existing_product,
-                        mutation_logs=mutation_logs
-                    )
+                    return None
             
             try:
                 # Create the product
@@ -1559,24 +1488,13 @@ class CreateProductCustomMutation(graphene.Mutation):
                                 mutation_label="Update Existing Product (Validation Fallback)"
                             )
                             
-                            # Get mutation logs for response
-                            mutation_logs = get_product_mutation_logs(existing_product)
                         except Exception as log_exc:
                             logger.error("Failed to create/retrieve mutation logs: %s", log_exc)
-                            mutation_logs = []
                         
-                        return CreateProductCustomMutation(
-                            ok=True,
-                            message=f"Updated existing product '{existing_product.name}' (code: {existing_product.code}) for this location.",
-                            product=existing_product,
-                            mutation_logs=mutation_logs
-                        )
-                # If it's another validation error, re-raise it
-                return CreateProductCustomMutation(
-                    ok=False,
-                    message=str(e),
-                    product=None
-                )
+                        return None
+                return [{
+                    "message":str(e)
+                }]
 
             # Handle membership_types many-to-many
             _process_membership_types(
@@ -1593,21 +1511,11 @@ class CreateProductCustomMutation(graphene.Mutation):
                     mutation_label="Create Product"
                 )
                 
-                # Get mutation logs for response
-                mutation_logs = get_product_mutation_logs(product)
             except Exception as log_exc:
                 logger.error("Failed to create/retrieve mutation logs: %s", log_exc)
-                mutation_logs = []
             
-            return CreateProductCustomMutation(
-                ok=True,
-                message="Product created successfully.",
-                product=product,
-                mutation_logs=mutation_logs
-            )
+            return None
         except Exception as e:
-            return CreateProductCustomMutation(
-                ok=False,
-                message=str(e),
-                product=None
-            )
+            return [{
+                "message": str(e)
+            }]
