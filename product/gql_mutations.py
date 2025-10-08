@@ -211,7 +211,7 @@ def create_or_update_product(user, data, is_duplicate=False, has_no_indigent=Fal
             'enrolment_period_end_date', 'coverage_period_start_date', 'coverage_period_end_date', 'administration_period', 'recurrence', 'location_id',
             'conversion_product_id', 'acc_code_remuneration', 'acc_code_premiums', 'premium_adult',
             'threshold', 'share_contribution', 'registration_lump_sum', 'registration_fee',
-            'additional_spouse_contribution', 'penalty_price',
+            'additional_spouse_contribution', 'penality_formula',
             'start_cycle_1', 'start_cycle_2', 'start_cycle_3', 'start_cycle_4', 'ceiling_interpretation',
             'ceiling_type', 'ded_insuree', 'ded_ip_insuree', 'ded_op_insuree', 'max_insuree', 'max_ip_insuree',
             'max_op_insuree', 'max_ceiling_policy', 'max_ceiling_policy_ip', 'max_ceiling_policy_op',
@@ -349,7 +349,7 @@ def _create_product_with_relations(user, product_data, is_duplicate, has_no_indi
                 'registration_lump_sum': product_data.get('registration_lump_sum'),
                 'registration_fee': product_data.get('registration_fee'),
                 'additional_spouse_contribution': product_data.get('additional_spouse_contribution'),
-                'penalty_price': product_data.get('penalty_price'),
+                'penality_formula': product_data.get('penality_formula'),
                 'start_cycle_1': product_data.get('start_cycle_1'),
                 'start_cycle_2': product_data.get('start_cycle_2'),
                 'start_cycle_3': product_data.get('start_cycle_3'),
@@ -719,7 +719,7 @@ class ProductInputType(OpenIMISMutation.Input):
     additional_spouse_contribution = graphene.Decimal(
         max_digits=18, decimal_places=2, required=False
     )
-    penalty_price = graphene.Decimal(
+    penality_formula = graphene.Decimal(
         max_digits=18, decimal_places=2, required=False
     )
     start_cycle_1 = graphene.String()
@@ -940,7 +940,7 @@ class ProductInputCustom(OpenIMISMutation.Input):
     card_replacement_fee = graphene.Decimal(required=False, description="Card replacement fee")
     premium_adult = graphene.Decimal(required=False, description="Premium for adults")
     additional_spouse_contribution = graphene.Decimal(required=False, description="Additional spouse contribution")
-    penalty_price = graphene.Decimal(required=False, description="Penalty price")
+    penality_formula = graphene.Decimal(required=False, description="Penalty formula")
     membership_types = graphene.JSONString(required=False, description="Membership types as JSON")
     age_maximal = graphene.Int(required=False, description="Maximum age")
     chf_id_format = graphene.Int(required=False, description="CHF ID format (1, 2 or 3)")
@@ -1203,7 +1203,7 @@ class CreateProductInput(OpenIMISMutation.Input):
     card_replacement_fee = graphene.Decimal(required=True)
     premium_adult = graphene.Decimal(required=False)
     additional_spouse_contribution = graphene.Decimal(required=False)
-    penalty_price = graphene.Decimal(required=False)
+    penality_formula = graphene.Decimal(required=False)
     membership_types = graphene.JSONString(required=False)
     age_maximal = graphene.Int(required=False)
     chf_id_format = graphene.Int(required=False)
@@ -1214,6 +1214,7 @@ class CreateProductInput(OpenIMISMutation.Input):
     has_no_indigent = graphene.Boolean(required=False, default_value=False)
     location_id = graphene.Int(required=False, description="Location ID to associate with the product")
     penality_formula = graphene.String(required=False, description="Penality formula for the product")
+    registration_fee = graphene.Decimal(required=False)
 
 class CreateProductCustomMutation(OpenIMISMutation):
     _mutation_module = "product"
@@ -1238,7 +1239,6 @@ class CreateProductCustomMutation(OpenIMISMutation):
             lump_sum = 0
             premium_adult = input["premium_adult"]
             additional_spouse_contribution = input["additional_spouse_contribution"]
-            penalty_price = input["penalty_price"]
             membership_types = input["membership_types"]
             age_maximal = input["age_maximal"]
             chf_id_format = input["chf_id_format"]
@@ -1249,6 +1249,7 @@ class CreateProductCustomMutation(OpenIMISMutation):
             has_no_indigent = input["has_no_indigent"]
             location_id = input["location_id"]
             penality_formula = input["penality_formula"]
+            registration_fee = input["registration_fee"]
             # Parse membership_types if provided
             membership_types_data = None
             if membership_types:
@@ -1284,8 +1285,7 @@ class CreateProductCustomMutation(OpenIMISMutation):
                         update_data['premium_adult'] = premium_adult
                     if additional_spouse_contribution is not None:
                         update_data['additional_spouse_contribution'] = additional_spouse_contribution
-                    if penalty_price is not None:
-                        update_data['penalty_price'] = penalty_price
+
                     if age_maximal is not None:
                         update_data['age_maximal'] = age_maximal
                     if chf_id_format is not None:
@@ -1300,6 +1300,8 @@ class CreateProductCustomMutation(OpenIMISMutation):
                         update_data['coverage_period_end_date'] = coverage_period_end_date
                     if penality_formula is not None:
                         update_data['penality_formula'] = penality_formula
+                    if registration_fee is not None:
+                        update_data['registration_fee'] = registration_fee
                     # Update the product directly in the database
                     Product.objects.filter(id=existing_product.id).update(**update_data)
                     
@@ -1329,7 +1331,7 @@ class CreateProductCustomMutation(OpenIMISMutation):
                     card_replacement_fee=card_replacement_fee,
                     premium_adult=premium_adult,
                     additional_spouse_contribution=additional_spouse_contribution,
-                    penalty_price=penalty_price,
+                    penality_formula=penality_formula,
                     audit_user_id=audit_user_id,
                     age_maximal=age_maximal,
                     chf_id_format=chf_id_format,
@@ -1361,8 +1363,6 @@ class CreateProductCustomMutation(OpenIMISMutation):
                             update_data['premium_adult'] = premium_adult
                         if additional_spouse_contribution is not None:
                             update_data['additional_spouse_contribution'] = additional_spouse_contribution
-                        if penalty_price is not None:
-                            update_data['penalty_price'] = penalty_price
                         if age_maximal is not None:
                             update_data['age_maximal'] = age_maximal
                         if chf_id_format is not None:
