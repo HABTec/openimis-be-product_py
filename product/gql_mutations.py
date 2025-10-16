@@ -43,7 +43,7 @@ from .services import (
     update_product_location,
     create_product_from_parent,
 )
-
+import re
 # Module-level logger
 logger = logging.getLogger(__name__)
 
@@ -1196,6 +1196,20 @@ def get_product_gqltype():
     return ProductGQLType
 
 
+def validate_formula(formula, expected_vars):
+    expected_vars_lower = [var.lower() for var in expected_vars]
+    
+    variables = re.findall(r'\{(\w+)\}', formula, re.IGNORECASE)
+    
+    unique_vars = list(dict.fromkeys(var.lower() for var in variables))
+    
+    extra_vars = set(unique_vars) - set(expected_vars_lower)
+    if extra_vars:
+        return False
+    
+    return True, ""
+
+
 class CreateProductInput(OpenIMISMutation.Input):
     code = graphene.String(required=True)
     name = graphene.String(required=True)
@@ -1261,6 +1275,11 @@ class CreateProductCustomMutation(OpenIMISMutation):
                     return [{
                         "message":"membership_types must be a JSON string or dict",
                         }]
+            expected_vars = ["Years", "CalculatedPremium"]
+            if not validate_formula(str(penality_formula) , expected_vars):
+                return [{
+                    "message":"Invalid penality formula",
+                    }]
 
             # Check if a product already exists for this location
             if location_id:
