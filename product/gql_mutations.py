@@ -1275,7 +1275,7 @@ class CreateProductCustomMutation(OpenIMISMutation):
                     return [{
                         "message":"membership_types must be a JSON string or dict",
                         }]
-            expected_vars = ["Years", "CalculatedPremium"]
+            expected_vars = ["Year", "CalculatedPremium"]
             if not validate_formula(str(penality_formula) , expected_vars):
                 return [{
                     "message":"Invalid penality formula",
