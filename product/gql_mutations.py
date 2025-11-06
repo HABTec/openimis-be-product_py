@@ -539,26 +539,7 @@ def _process_membership_types(product, product_data, has_no_indigent=False):
             if created:
                 logger.info(f"Created new district: {district_name} in region {region_name}")
 
-    # 1. Create the default indigent membership type if required
-    if not has_no_indigent:
-        if not region:
-            raise ValidationError({'region': ['This field is required to create a default indigent membership type.']})
-        try:
-            indigent_defaults = {
-                'region_id': region.id if region else None,
-                'district_id': district.id if district else None,
-                'level_type': 'urban',         # Arbitrary default. Business can adjust later.
-                'level_index': 1,
-                'price': 0,
-                'is_indigent': True,
-                'audit_user_id': audit_user_id,
-            }
-            indigent_data = {k: v for k, v in indigent_defaults.items() if k in valid_fields}
-            membership_types.append(MembershipType.objects.create(**indigent_data))
-            logger.debug("Created default indigent membership type for product %s", product.id)
-        except Exception as e:
-            logger.error("Failed to create default indigent membership type: %s", e)
-            raise
+    
 
     # 2. Process user-provided membership types (if any)
     if mt_data_input and 'levels' in mt_data_input:
@@ -1207,7 +1188,7 @@ def validate_formula(formula, expected_vars):
     if extra_vars:
         return False
     
-    return True, ""
+    return True
 
 
 class CreateProductInput(OpenIMISMutation.Input):
