@@ -16,7 +16,7 @@ from core.models import MutationLog
 from core.schema import OpenIMISMutation
 from dataclasses import dataclass
 import uuid as uuidlib
-
+from datetime import datetime as py_datetime
 from .apps import ProductConfig
 from .enums import (
     CareTypeEnum,
@@ -1149,8 +1149,10 @@ class DeleteProductMutation(OpenIMISMutation):
                 continue
             try:
                 
-                
-                product.delete_history()
+                now = py_datetime.now()
+                product.validity_from = now
+                product.validity_to = now
+                product.save() 
             except Exception as exc:
                 errors.append(
                     {
