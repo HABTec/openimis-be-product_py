@@ -1095,8 +1095,9 @@ class UpdateProductCustomMutation(OpenIMISMutation):
             # Regular update without location change
             if update_data:
                 # Use queryset update to bypass model validation if needed
-                Product.objects.filter(id=product.id).update(**update_data)
-                product.refresh_from_db()
+                pd = Product.objects.filter(id=product.id , validity_to=None)
+                pd.update(**update_data)
+                updatedpd = product.refresh_from_db()
 
             # Handle membership_types if provided
             if membership_types_data:
