@@ -338,7 +338,8 @@ class Query(CustomQuery, graphene.ObjectType):
             from location.models import Location
 
             qs = qs.filter(
-                Q(location__id=location)
+                Q(location__in=Location.objects.parents(location))
+                | Q(location__id=location)
                 | Q(location__isnull=True)
 
             )
