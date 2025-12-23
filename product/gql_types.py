@@ -62,19 +62,5 @@ class MembershipTypeGQLType(DjangoObjectType):
             "level_index",
             "price",
             "is_indigent",
-            "region",
-            "district",
         )
 
-    region = graphene.Field(RegionGQLType)
-    district = graphene.Field(DistrictGQLType)
-
-    def resolve_region(self, info):
-        if self.region_id:
-            return Location.objects.filter(id=self.region_id).first()
-        return None
-
-    def resolve_district(self, info):
-        if self.district_id:
-            return Location.objects.filter(id=self.district_id).first()
-        return None
