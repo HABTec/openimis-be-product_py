@@ -3,7 +3,7 @@ from django.apps import apps
 from core import datetime
 from core import filter_validity
 from core.utils import TimeUtils
-from .models import Product, ProductItem, ProductService
+from .models import Product, ProductItem, ProductService, ProductLaboratoryService, MembershipType
 from model_clone.utils import create_copy_of_instance
 
 from django.core.exceptions import ValidationError
@@ -14,7 +14,7 @@ from django.db import models
 logger = logging.getLogger(__name__)
 
 
-def save_product_history(product, items, services):
+def save_product_history(product, items, services, lab_services):
     hist_id = product.save_history()
     product.relative_distributions.update(validity_to=TimeUtils.now())
     return hist_id
@@ -375,6 +375,29 @@ def create_product_from_parent(
             limit_child_e=ps.limit_child_e,
             ceiling_exclusion_adult=ps.ceiling_exclusion_adult,
             ceiling_exclusion_child=ps.ceiling_exclusion_child,
+        )
+
+    for pls in parent.lab_services.all():
+        ProductLaboratoryService.objects.create(
+            audit_user_id=user.id_for_audit,
+            product=child,
+            lab_service=pls.lab_service,
+            price_origin=pls.price_origin,
+            limit_adult=pls.limit_adult,
+            limit_child=pls.limit_child,
+            waiting_period_adult=pls.waiting_period_adult,
+            waiting_period_child=pls.waiting_period_child,
+            limit_no_adult=pls.limit_no_adult,
+            limit_no_child=pls.limit_no_child,
+            limitation_type=pls.limitation_type,
+            limitation_type_r=pls.limitation_type_r,
+            limitation_type_e=pls.limitation_type_e,
+            limit_adult_r=pls.limit_adult_r,
+            limit_adult_e=pls.limit_adult_e,
+            limit_child_r=pls.limit_child_r,
+            limit_child_e=pls.limit_child_e,
+            ceiling_exclusion_adult=pls.ceiling_exclusion_adult,
+            ceiling_exclusion_child=pls.ceiling_exclusion_child,
         )
 
     return child

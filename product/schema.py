@@ -10,7 +10,7 @@ from graphene_django import DjangoObjectType
 from graphene_django.filter import DjangoFilterConnectionField
 import graphene_django_optimizer as gql_optimizer
 
-from .models import Product, ProductItem, ProductService, MembershipType
+from .models import Product, ProductItem, ProductService, MembershipType, ProductLaboratoryService
 from .services import check_unique_code_product
 from .gql_mutations import (
     CreateProductMutation,
@@ -278,8 +278,25 @@ class ProductServiceGQLType(DjangoObjectType):
         }
         connection_class = ExtendedConnection
 
+class ProductLaboratoryServiceGQLType(DjangoObjectType):
+    ceiling_exclusion_adult = graphene.Field(CeilingExclusionEnum)
+    ceiling_exclusion_child = graphene.Field(CeilingExclusionEnum)
+    limitation_type = graphene.Field(LimitTypeEnum)
+    limitation_type_r = graphene.Field(LimitTypeEnum)
+    limitation_type_e = graphene.Field(LimitTypeEnum)
+    price_origin = graphene.Field(PriceOriginEnum)
 
+    @classmethod
+    def get_queryset(cls, queryset, info):
+        return queryset.filter()
 
+    class Meta:
+        model = ProductLaboratoryService
+        interfaces = (Node,)
+        filter_fields = {
+            "id": ["exact"],
+        }
+        connection_class = ExtendedConnection
 
 
 class Query(CustomQuery, graphene.ObjectType):

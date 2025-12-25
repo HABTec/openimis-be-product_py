@@ -33,6 +33,7 @@ from .models import (
     ProductItem,
     ProductService,
     ProductMutation,
+    ProductLaboratoryService
 )
 from .services import (
     check_unique_code_product,
@@ -222,8 +223,16 @@ def create_or_update_product(user, data, is_duplicate=False, has_no_indigent=Fal
         ]
         
         # Filter and prepare product data
+        services = data.pop("services", [])
+        items = data.pop("items", [])
+        lab_services = data.pop("lab_services", [])
+
         product_data = {k: v for k, v in data.items() 
-                       if k in product_fields and v is not None}
+                if k in product_fields and v is not None}
+
+        product_data["services"] = services
+        product_data["items"] = items
+        product_data["lab_services"] = lab_services
 
         # If UUID is provided and this is not a duplication request, perform an update
         if not is_duplicate and 'uuid' in data and data['uuid']:
@@ -407,11 +416,15 @@ def _create_product_with_relations(user, product_data, is_duplicate, has_no_indi
             #     _process_membership_types(product, {'membership_types': membership_types_data})
             
             # Process product items if provided
-            if 'product_items' in product_data and product_data['product_items']:
+            if product_data.get("items"):
                 _process_product_items(product, product_data)
-            
-            
-            
+
+            if product_data.get("lab_services"):
+                _process_product_lab_services(product, product_data)
+
+            if product_data.get("services"):
+                _process_product_services(product, product_data)  
+                            
             # Refresh and return the product
             product.refresh_from_db()
             logger.info(f"Successfully created product {product.id} with all related data")
@@ -610,6 +623,93 @@ def _process_product_items(product, product_data):
             logger.error(f"Error creating product item: {str(e)}")
             raise
 
+def _process_product_services(product, product_data):
+    """Process and create product medical services."""
+    if 'services' not in product_data or not product_data['services']:
+        return
+
+    for service_data in product_data['services']:
+        try:
+            from medical.models import Service
+
+            service_obj = Service.objects.get(
+                uuid=service_data['service_uuid']
+            )
+
+            ProductService.objects.create(
+                product=product,
+                service=service_obj,
+                price_origin=service_data.get('price_origin'),
+                limitation_type=service_data.get('limitation_type'),
+                limitation_type_r=service_data.get('limitation_type_r'),
+                limitation_type_e=service_data.get('limitation_type_e'),
+                waiting_period_adult=service_data.get('waiting_period_adult'),
+                waiting_period_child=service_data.get('waiting_period_child'),
+                limit_no_adult=service_data.get('limit_no_adult'),
+                limit_no_child=service_data.get('limit_no_child'),
+                limit_adult=service_data.get('limit_adult'),
+                limit_child=service_data.get('limit_child'),
+                limit_adult_r=service_data.get('limit_adult_r'),
+                limit_adult_e=service_data.get('limit_adult_e'),
+                limit_child_r=service_data.get('limit_child_r'),
+                limit_child_e=service_data.get('limit_child_e'),
+                ceiling_exclusion_adult=service_data.get('ceiling_exclusion_adult'),
+                ceiling_exclusion_child=service_data.get('ceiling_exclusion_child'),
+                audit_user_id=product_data.get('audit_user_id', 1),
+            )
+
+            logger.info(f"Created product service for product {product.id}")
+
+        except Service.DoesNotExist:
+            logger.error(
+                f"Service with uuid {service_data.get('service_uuid')} does not exist"
+            )
+            raise
+
+        except Exception as e:
+            logger.error(f"Error creating product service: {str(e)}")
+            raise
+
+
+def _process_product_lab_services(product, product_data):
+    """Process and create product laboratory services."""
+    if 'lab_services' not in product_data or not product_data['lab_services']:
+        return
+        
+    for lab_service_data in product_data['lab_services']:
+        try:
+            from medical.models import LaboratoryService
+            
+            lab_service_obj = LaboratoryService.objects.get(
+                uuid=lab_service_data['lab_service_uuid']
+            )
+            
+            ProductLaboratoryService.objects.create(
+                product=product,
+                lab_service=lab_service_obj,
+                price_origin=lab_service_data.get('price_origin'),
+                limitation_type=lab_service_data.get('limitation_type'),
+                limitation_type_r=lab_service_data.get('limitation_type_r'),
+                limitation_type_e=lab_service_data.get('limitation_type_e'),
+                waiting_period_adult=lab_service_data.get('waiting_period_adult'),
+                waiting_period_child=lab_service_data.get('waiting_period_child'),
+                limit_no_adult=lab_service_data.get('limit_no_adult'),
+                limit_no_child=lab_service_data.get('limit_no_child'),
+                limit_adult=lab_service_data.get('limit_adult'),
+                limit_child=lab_service_data.get('limit_child'),
+                limit_adult_r=lab_service_data.get('limit_adult_r'),
+                limit_adult_e=lab_service_data.get('limit_adult_e'),
+                limit_child_r=lab_service_data.get('limit_child_r'),
+                limit_child_e=lab_service_data.get('limit_child_e'),
+                ceiling_exclusion_adult=lab_service_data.get('ceiling_exclusion_adult'),
+                ceiling_exclusion_child=lab_service_data.get('ceiling_exclusion_child'),
+                audit_user_id=product_data.get('audit_user_id', 1)
+            )
+            logger.info(f"Created product laboratory service for product {product.id}")
+        except Exception as e:
+            logger.error(f"Error creating product laboratory service: {str(e)}")
+            raise
+
 
 class RelativePricesInput(graphene.InputObjectType):
     care_type = graphene.Field(CareTypeEnum)
@@ -668,6 +768,9 @@ class ProductServiceInput(ProductServiceOrItemInput):
 
 class ProductItemInput(ProductServiceOrItemInput):
     item_uuid = graphene.UUID(required=True)
+
+class ProductLaboratoryServiceInput(ProductServiceOrItemInput):
+    lab_service_uuid = graphene.UUID(required=True)  
 
 
 class ProductInputType(OpenIMISMutation.Input):
@@ -761,6 +864,7 @@ class ProductInputType(OpenIMISMutation.Input):
     relative_prices = graphene.List(RelativePricesInput)
     items = graphene.List(graphene.NonNull(ProductItemInput))
     services = graphene.List(graphene.NonNull(ProductServiceInput))
+    lab_services = graphene.List(graphene.NonNull(ProductLaboratoryServiceInput))
     age_maximal = graphene.Int()
     chf_id_format = graphene.Int(description="CHF ID format (1, 2 or 3)")
     membership_types = graphene.JSONString(required=False)
@@ -863,6 +967,7 @@ class DuplicateProductMutation(OpenIMISMutation):
 
         duplicate_items = True #if 'items' not in data else False
         duplicate_services = True #if 'services' not in data else False
+        duplicate_lab_services = True
 
         has_no_indigent = data.pop("has_no_indigent", False)
         new_product = create_or_update_product(user, data, is_duplicate=True, has_no_indigent=has_no_indigent)
@@ -884,6 +989,16 @@ class DuplicateProductMutation(OpenIMISMutation):
                 service.pk = None
                 service.product = new_product
                 service.save()
+
+        if duplicate_lab_services:
+            new_product_lab_services = ProductLaboratoryService.objects.filter(
+                product=Product.objects.get(uuid=current_uuid, validity_to__isnull=True)
+            )
+            for lab_service in new_product_lab_services:
+                # create a new instance by setting pk = None
+                lab_service.pk = None
+                lab_service.product = new_product
+                lab_service.save()
 
 
         return new_product
