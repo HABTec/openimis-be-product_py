@@ -744,7 +744,94 @@ class MembershipType(models.Model):
         return cls.objects.bulk_create(objs)
 
 
-# Propagate selected changes from parent to all children
+class ProductLaboratoryService(VersionedModel, ProductItemOrService):
+    id = models.AutoField(db_column="ProdLabServiceID", primary_key=True)
+    product = models.ForeignKey(
+        Product,
+        db_column="ProdID",
+        on_delete=models.DO_NOTHING,
+        related_name="lab_services",  
+    )
+    lab_service = models.ForeignKey(
+        "medical.LaboratoryService",
+        db_column="LabServiceID",
+        on_delete=models.DO_NOTHING,
+        related_name="product_lab_services",
+    )
+    price_origin = models.CharField(
+        db_column="PriceOrigin",
+        max_length=1,
+        choices=(
+            ("P", gettext_lazy("Schema Price")),
+            ("O", gettext_lazy("Providers Own Price")),
+            ("R", gettext_lazy("Relative Price")),
+        ),
+    )
+    limit_adult = models.DecimalField(
+        db_column="LimitAdult", max_digits=18, decimal_places=2, blank=True, null=True
+    )
+    limit_child = models.DecimalField(
+        db_column="LimitChild", max_digits=18, decimal_places=2, blank=True, null=True
+    )
+    waiting_period_adult = models.IntegerField(
+        db_column="WaitingPeriodAdult", blank=True, null=True
+    )
+    waiting_period_child = models.IntegerField(
+        db_column="WaitingPeriodChild", blank=True, null=True
+    )
+    limit_no_adult = models.IntegerField(
+        db_column="LimitNoAdult", blank=True, null=True
+    )
+    limit_no_child = models.IntegerField(
+        db_column="LimitNoChild", blank=True, null=True
+    )
+    limitation_type = models.CharField(
+        db_column="LimitationType", max_length=1, choices=LIMIT_CHOICES
+    )
+    limitation_type_r = models.CharField(
+        db_column="LimitationTypeR",
+        max_length=1,
+        null=True,
+        blank=True,
+        choices=LIMIT_CHOICES,
+    )
+    limitation_type_e = models.CharField(
+        db_column="LimitationTypeE",
+        max_length=1,
+        null=True,
+        blank=True,
+        choices=LIMIT_CHOICES,
+    )
+    limit_adult_r = models.DecimalField(
+        db_column="LimitAdultR", max_digits=18, decimal_places=2, blank=True, null=True
+    )
+    limit_adult_e = models.DecimalField(
+        db_column="LimitAdultE", max_digits=18, decimal_places=2, blank=True, null=True
+    )
+    limit_child_r = models.DecimalField(
+        db_column="LimitChildR", max_digits=18, decimal_places=2, blank=True, null=True
+    )
+    limit_child_e = models.DecimalField(
+        db_column="LimitChildE", max_digits=18, decimal_places=2, blank=True, null=True
+    )
+    ceiling_exclusion_adult = models.CharField(
+        db_column="CeilingExclusionAdult", max_length=1, null=True, blank=True
+    )
+    ceiling_exclusion_child = models.CharField(
+        db_column="CeilingExclusionChild", max_length=1, null=True, blank=True
+    )
+    audit_user_id = models.IntegerField(db_column="AuditUserID")
+    
+    model_prefix = "lab_service"
+    objects = ProductItemOrServiceManager()
+
+    class Meta:
+        managed = True
+        db_table = "tblProductLabServices"
+        verbose_name = "Product Laboratory Service"
+        verbose_name_plural = "Product Laboratory Services"
+
+
 @receiver(post_save, sender=Product)
 def propagate_product_changes_to_children(sender, instance: Product, created, **kwargs):
     # Do not propagate when saving a child to avoid loops
@@ -813,4 +900,29 @@ def propagate_product_changes_to_children(sender, instance: Product, created, **
                 limit_child_e=parent_svc.limit_child_e,
                 ceiling_exclusion_adult=parent_svc.ceiling_exclusion_adult,
                 ceiling_exclusion_child=parent_svc.ceiling_exclusion_child,
+            )
+        
+        # Sync lab services to mirror the parent definition
+        child.lab_services.all().delete()
+        for parent_lab_svc in instance.lab_services.all():
+            ProductLaboratoryService.objects.create(
+                audit_user_id=parent_lab_svc.audit_user_id,
+                product=child,
+                lab_service=parent_lab_svc.lab_service,
+                price_origin=parent_lab_svc.price_origin,
+                limit_adult=parent_lab_svc.limit_adult,
+                limit_child=parent_lab_svc.limit_child,
+                waiting_period_adult=parent_lab_svc.waiting_period_adult,
+                waiting_period_child=parent_lab_svc.waiting_period_child,
+                limit_no_adult=parent_lab_svc.limit_no_adult,
+                limit_no_child=parent_lab_svc.limit_no_child,
+                limitation_type=parent_lab_svc.limitation_type,
+                limitation_type_r=parent_lab_svc.limitation_type_r,
+                limitation_type_e=parent_lab_svc.limitation_type_e,
+                limit_adult_r=parent_lab_svc.limit_adult_r,
+                limit_adult_e=parent_lab_svc.limit_adult_e,
+                limit_child_r=parent_lab_svc.limit_child_r,
+                limit_child_e=parent_lab_svc.limit_child_e,
+                ceiling_exclusion_adult=parent_lab_svc.ceiling_exclusion_adult,
+                ceiling_exclusion_child=parent_lab_svc.ceiling_exclusion_child,
             )
