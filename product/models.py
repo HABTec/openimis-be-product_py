@@ -756,7 +756,7 @@ class ProductLaboratoryService(VersionedModel, ProductItemOrService):
         "medical.LaboratoryService",
         db_column="LabServiceID",
         on_delete=models.DO_NOTHING,
-        related_name="lab_services",
+        related_name="product_lab_services",
     )
     price_origin = models.CharField(
         db_column="PriceOrigin",

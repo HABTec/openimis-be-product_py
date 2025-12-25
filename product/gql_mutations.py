@@ -706,6 +706,12 @@ def _process_product_lab_services(product, product_data):
                 audit_user_id=product_data.get('audit_user_id', 1)
             )
             logger.info(f"Created product laboratory service for product {product.id}")
+            
+        except LaboratoryService.DoesNotExist:
+            logger.error(
+                f"Laboratory service with uuid {lab_service_data.get('lab_service_uuid')} does not exist"
+            )
+            raise
         except Exception as e:
             logger.error(f"Error creating product laboratory service: {str(e)}")
             raise

@@ -10,7 +10,7 @@ from graphene_django import DjangoObjectType
 from graphene_django.filter import DjangoFilterConnectionField
 import graphene_django_optimizer as gql_optimizer
 
-from .models import Product, ProductItem, ProductService, MembershipType, ProductLaboratoryService
+from .models import Product, ProductItem, ProductService, ProductLaboratoryService
 from .services import check_unique_code_product
 from .gql_mutations import (
     CreateProductMutation,

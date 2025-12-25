@@ -14,7 +14,7 @@ from django.db import models
 logger = logging.getLogger(__name__)
 
 
-def save_product_history(product, items, services, lab_services):
+def save_product_history(product):
     hist_id = product.save_history()
     product.relative_distributions.update(validity_to=TimeUtils.now())
     return hist_id
