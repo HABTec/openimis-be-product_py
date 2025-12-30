@@ -455,7 +455,7 @@ class Product(VersionedModel):
         """Enforce one product per location (district and region)."""
         if self.location_id:
             # Check if there's another product with the same location
-            existing_products = Product.objects.filter(location_id=self.location_id)
+            existing_products = Product.objects.filter(location_id=self.location_id ,validity_to__isnull=True)
             
             # Exclude self when updating
             if self.id:
